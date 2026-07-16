@@ -26,6 +26,11 @@ type RunnerStore = RunnerState & {
 
 let abortController: AbortController | null = null;
 
+// 実行中はどの画面にいてもタブ閉じ警告を出す(閉じてもチェックポイントから再開はできる)
+const onBeforeUnload = (e: BeforeUnloadEvent) => {
+  e.preventDefault();
+};
+
 export const useRunner = create<RunnerStore>((set, get) => ({
   runningProjectId: null,
   currentStep: null,
@@ -52,6 +57,7 @@ export const useRunner = create<RunnerStore>((set, get) => ({
       intermediateCoords: null,
     });
     await db.projects.update(project.id, { status: "running", errorMessage: undefined });
+    window.addEventListener("beforeunload", onBeforeUnload);
 
     try {
       const result: Result = await runPipeline(project, {
@@ -102,6 +108,7 @@ export const useRunner = create<RunnerStore>((set, get) => ({
       }
     } finally {
       abortController = null;
+      window.removeEventListener("beforeunload", onBeforeUnload);
     }
   },
 }));

@@ -103,6 +103,7 @@ export async function exportSingleHtml(result: Result): Promise<void> {
   const start = template.indexOf(marker);
   if (start === -1) throw new Error("テンプレートに report-data タグがありません");
   const end = template.indexOf("</script>", start);
+  if (end === -1) throw new Error("テンプレートの report-data タグが閉じていません");
   const html = template.slice(0, start + marker.length) + json + template.slice(end);
   const title = result.config?.name ?? "report";
   downloadBlob(new Blob([html], { type: "text/html" }), `${title}.html`);

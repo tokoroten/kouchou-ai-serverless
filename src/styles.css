@@ -258,6 +258,24 @@ table.preview-table {
   margin: 6px 0;
 }
 
+/* 階層リスト */
+.hierarchy-list details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.hierarchy-list summary {
+  cursor: pointer;
+}
+.hierarchy-children {
+  margin-left: 20px;
+}
+.hierarchy-takeaway {
+  margin: 4px 0 0 20px;
+}
+
 .app-footer {
   margin-top: 32px;
   padding-top: 16px;

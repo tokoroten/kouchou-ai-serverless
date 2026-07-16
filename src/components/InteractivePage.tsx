@@ -136,13 +136,15 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         worker.terminate();
       }
     };
+    const count = emb.argIds.length;
+    const clamp = (n: number) => Math.max(2, Math.min(n, count));
     worker.postMessage({
       type: "run",
       input: {
         vectors: emb.vectors,
         dim: emb.dim,
-        count: emb.argIds.length,
-        clusterNums: [Math.min(lv1, lv2), Math.max(lv1, lv2)],
+        count,
+        clusterNums: [...new Set([clamp(Math.min(lv1, lv2)), clamp(Math.max(lv1, lv2))])],
         seed: "kouchou-ai",
       },
     });
@@ -152,8 +154,8 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (!umapDone || !coords || !preprocessed?.emb) return;
     const count = preprocessed.emb.argIds.length;
-    const nums = [...new Set([Math.min(lv1, lv2), Math.max(lv1, lv2)])].filter((n) => n <= count);
-    if (nums.length === 0) return;
+    const clamp = (n: number) => Math.max(2, Math.min(n, count));
+    const nums = [...new Set([clamp(Math.min(lv1, lv2)), clamp(Math.max(lv1, lv2))])];
     const embedded: number[][] = new Array(count);
     for (let i = 0; i < count; i++) embedded[i] = [coords.x[i], coords.y[i]];
     const result = clusterXY(embedded, nums, "kouchou-ai");
@@ -170,7 +172,8 @@ export function InteractivePage({ projectId }: { projectId: string }) {
     setError(null);
     setLabelling(true);
     try {
-      const nums = [...new Set([Math.min(lv1, lv2), Math.max(lv1, lv2)])].filter((n) => n <= emb.argIds.length);
+      const clampN = (n: number) => Math.max(2, Math.min(n, emb.argIds.length));
+      const nums = [...new Set([clampN(Math.min(lv1, lv2)), clampN(Math.max(lv1, lv2))])];
       const clusteringResult = {
         argIds: emb.argIds,
         x: coords.x,

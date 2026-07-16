@@ -13,6 +13,8 @@ type Props = {
   showClusterLabels?: boolean;
   /** 密度表示モード: 指定時は densityFilter を満たすクラスタのみ色付け */
   densityFilter?: { maxPercentile: number; minValue: number };
+  /** 属性フィルタ: 指定時は含まれない点をグレー表示(本家と同じ) */
+  filteredArgumentIds?: Set<string> | null;
   onPointClick?: (argId: string) => void;
 };
 
@@ -22,6 +24,7 @@ export function ScatterChart({
   targetLevel,
   showClusterLabels = true,
   densityFilter,
+  filteredArgumentIds,
   onPointClick,
 }: Props) {
   const { data, annotations } = useMemo(() => {
@@ -41,30 +44,48 @@ export function ScatterChart({
     const annotations: any[] = [];
 
     for (const cluster of targetClusters) {
-      const args = argumentList.filter((arg) => arg.cluster_ids.includes(cluster.id));
-      if (args.length === 0) continue;
+      const allArgs = argumentList.filter((arg) => arg.cluster_ids.includes(cluster.id));
+      if (allArgs.length === 0) continue;
       const dense = isDense(cluster);
       const color = dense ? colorById.get(cluster.id) : "#cccccc";
-      data.push({
-        x: args.map((a) => a.x),
-        y: args.map((a) => a.y),
-        mode: "markers",
-        type: "scattergl",
-        marker: { size: 7, color, opacity: dense ? 1 : 0.4 },
-        text: args.map((a) => `<b>${cluster.label}</b><br>${wrapHoverText(a.argument)}`),
-        hoverinfo: "text",
-        hoverlabel: {
-          align: "left",
-          bgcolor: "white",
-          bordercolor: color,
-          font: { size: 12, color: "#333" },
-        },
-        customdata: args.map((a) => a.arg_id),
-        showlegend: false,
-      });
+
+      // 属性フィルタ対象外の点は背面にグレー表示(本家と同じ)
+      const notMatching = filteredArgumentIds ? allArgs.filter((a) => !filteredArgumentIds.has(a.arg_id)) : [];
+      const args = filteredArgumentIds ? allArgs.filter((a) => filteredArgumentIds.has(a.arg_id)) : allArgs;
+      if (notMatching.length > 0) {
+        data.push({
+          x: notMatching.map((a) => a.x),
+          y: notMatching.map((a) => a.y),
+          mode: "markers",
+          type: "scattergl",
+          marker: { size: 7, color: "#cccccc", opacity: 0.4 },
+          hoverinfo: "skip",
+          showlegend: false,
+        });
+      }
+      if (args.length > 0) {
+        data.push({
+          x: args.map((a) => a.x),
+          y: args.map((a) => a.y),
+          mode: "markers",
+          type: "scattergl",
+          marker: { size: 7, color, opacity: dense ? 1 : 0.4 },
+          text: args.map((a) => `<b>${cluster.label}</b><br>${wrapHoverText(a.argument)}`),
+          hoverinfo: "text",
+          hoverlabel: {
+            align: "left",
+            bgcolor: "white",
+            bordercolor: color,
+            font: { size: 12, color: "#333" },
+          },
+          customdata: args.map((a) => a.arg_id),
+          showlegend: false,
+        });
+      }
       if (showClusterLabels && dense) {
-        const cx = args.reduce((sum, a) => sum + a.x, 0) / args.length;
-        const cy = args.reduce((sum, a) => sum + a.y, 0) / args.length;
+        // クラスタ中心はフィルタに関わらず全点から計算する(本家と同じ)
+        const cx = allArgs.reduce((sum, a) => sum + a.x, 0) / allArgs.length;
+        const cy = allArgs.reduce((sum, a) => sum + a.y, 0) / allArgs.length;
         annotations.push({
           x: cx,
           y: cy,
@@ -79,7 +100,7 @@ export function ScatterChart({
       }
     }
     return { data, annotations };
-  }, [clusterList, argumentList, targetLevel, showClusterLabels, densityFilter]);
+  }, [clusterList, argumentList, targetLevel, showClusterLabels, densityFilter, filteredArgumentIds]);
 
   const layout = useMemo(
     () => ({

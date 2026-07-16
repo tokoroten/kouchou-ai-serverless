@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import Papa from "papaparse";
 import { normalizeComments } from "../src/lib/csv";
 import { probeChat } from "../src/lib/llm/client";
-import { memoryCheckpoints, type PipelineContext } from "../src/lib/pipeline/context";
+import { type PipelineContext, memoryCheckpoints } from "../src/lib/pipeline/context";
 import { runPipeline } from "../src/lib/pipeline/orchestrator";
 import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overviewPrompt } from "../src/prompts";
 import type { PipelineStepName, Project } from "../src/types/project";
@@ -136,7 +136,8 @@ async function main() {
     }
   }
   for (const cluster of result.clusters) {
-    if (cluster.level > 0 && !clusterIds.has(cluster.parent)) errors.push(`親クラスタ不在: ${cluster.id} -> ${cluster.parent}`);
+    if (cluster.level > 0 && !clusterIds.has(cluster.parent))
+      errors.push(`親クラスタ不在: ${cluster.id} -> ${cluster.parent}`);
     if (cluster.level > 0 && !cluster.label) errors.push(`ラベル空: ${cluster.id}`);
   }
   if (!result.overview) errors.push("overview が空");

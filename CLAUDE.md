@@ -32,15 +32,19 @@
 Vite + React + TypeScript (strict) / Zustand / Papa Parse / umap-js / ml-kmeans / ml-hclust /
 Plotly.js / Dexie / Biome / Vitest。パッケージマネージャは pnpm。
 
-## 開発コマンド(scaffold 後に確定させ、ここを更新すること)
+## 開発コマンド(確定)
 
 ```bash
 pnpm install
-pnpm dev        # 開発サーバ
-pnpm build      # 本番ビルド (GitHub Pages 向け base 設定に注意)
-pnpm test       # Vitest
-pnpm lint       # Biome
+pnpm dev              # 開発サーバ
+pnpm build            # 本番ビルド (テンプレート → 本体の2段。base=/kouchou-ai-serverless/)
+pnpm test             # Vitest (エンジン単体テスト)
+pnpm lint             # Biome
+pnpm debug:pipeline   # 実 API での E2E (要 .env、DEBUG_PROVIDER=openai|lmstudio|openrouter)
+npx vite-node scripts/browser-smoke.ts  # Playwright ブラウザスモーク (要 pnpm dev + .env)
 ```
+
+実装済み。設計との乖離は docs/DESIGN.md §11.5 に記録している。
 
 ## 進め方
 

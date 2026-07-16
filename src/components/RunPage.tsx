@@ -1,9 +1,10 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { useEffect } from "react";
+import { useMemo } from "react";
 import { navigate } from "../lib/router";
 import { db } from "../lib/storage/db";
 import { useRunner } from "../store/runner";
 import { PIPELINE_STEPS, type PipelineStepName } from "../types/project";
+import { Plot } from "./viewer/Plot";
 
 // 実行進捗画面(DESIGN §7-4)。
 // ステップごとのプログレスバー、処理件数、累計トークン、経過時間、中止/再開。
@@ -23,15 +24,22 @@ export function RunPage({ projectId }: { projectId: string }) {
   const runner = useRunner();
   const isRunning = runner.runningProjectId === projectId;
 
-  // 処理中のタブ閉じ警告(閉じても再開はできる)
-  useEffect(() => {
-    if (!isRunning) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [isRunning]);
+  // クラスタリング中は UMAP の収束過程をライブ表示する
+  const coords = isRunning ? runner.intermediateCoords : null;
+  const livePlotData = useMemo(() => {
+    if (!coords) return null;
+    return [
+      {
+        x: Array.from(coords.x),
+        y: Array.from(coords.y),
+        mode: "markers",
+        type: "scattergl",
+        marker: { size: 4, color: "#3fa9f5", opacity: 0.7 },
+        hoverinfo: "skip",
+        showlegend: false,
+      },
+    ];
+  }, [coords]);
 
   if (!project) return <p>読み込み中...</p>;
 
@@ -82,6 +90,24 @@ export function RunPage({ projectId }: { projectId: string }) {
           );
         })}
       </div>
+
+      {livePlotData && runner.currentStep === "clustering" && (
+        <div className="card">
+          <h2>UMAP 収束過程(ライブ)</h2>
+          <div style={{ height: 320 }}>
+            <Plot
+              data={livePlotData}
+              layout={{
+                margin: { l: 0, r: 0, b: 0, t: 0 },
+                xaxis: { zeroline: false, showticklabels: false, showgrid: false },
+                yaxis: { zeroline: false, showticklabels: false, showgrid: false },
+                showlegend: false,
+              }}
+              config={{ displayModeBar: false }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="row">

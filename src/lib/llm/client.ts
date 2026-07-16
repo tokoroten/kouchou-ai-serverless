@@ -50,6 +50,8 @@ export type EmbeddingOptions = {
   texts: string[];
   signal?: AbortSignal;
   onUsage?: (usage: Usage) => void;
+  /** 1呼び出し全体のタイムアウト(ms)。既定 300 秒。 */
+  timeoutMs?: number;
 };
 
 const MAX_RETRIES = 5;
@@ -229,12 +231,30 @@ async function requestChatInner(endpoint: EndpointConfig, options: ChatOptions, 
 
 /** embeddings 呼び出し。texts と同順の Float32Array 配列を返す。 */
 export async function requestEmbeddings(endpoint: EndpointConfig, options: EmbeddingOptions): Promise<Float32Array[]> {
+  const timeout = withTimeout(options.signal, options.timeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS);
+  try {
+    return await requestEmbeddingsInner(endpoint, options, timeout.signal);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError" && timeout.timedOut()) {
+      throw new LlmError("embeddings の応答がタイムアウトしました。エンドポイント設定を確認してください。");
+    }
+    throw e;
+  } finally {
+    timeout.cancel();
+  }
+}
+
+async function requestEmbeddingsInner(
+  endpoint: EndpointConfig,
+  options: EmbeddingOptions,
+  signal: AbortSignal,
+): Promise<Float32Array[]> {
   const url = `${endpoint.baseUrl.replace(/\/$/, "")}/embeddings`;
   const body = { model: endpoint.model, input: options.texts };
   const res = await fetchWithRetry(
     url,
     { method: "POST", headers: buildHeaders(endpoint), body: JSON.stringify(body) },
-    options.signal,
+    signal,
   );
   const data = (await res.json()) as Record<string, unknown>;
   options.onUsage?.(extractUsage(data));

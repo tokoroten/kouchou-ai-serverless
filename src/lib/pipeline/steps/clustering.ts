@@ -21,7 +21,10 @@ export async function clustering(
 ): Promise<ClusteringResult> {
   throwIfAborted(ctx.signal);
   const count = embeddingResult.argIds.length;
-  const nums = clusterNums.length > 0 ? clusterNums : calculateRecommendedClusterNums(count);
+  // ユーザ指定のクラスタ数がデータ件数を超えていても、抽出・埋め込みのコストを
+  // 払った後に落とさないよう件数でクランプする
+  const requested = clusterNums.length > 0 ? clusterNums : calculateRecommendedClusterNums(count);
+  const nums = [...new Set(requested.map((n) => Math.max(2, Math.min(n, count))))].sort((a, b) => a - b);
   const input: ClusteringInput = {
     vectors: embeddingResult.vectors,
     dim: embeddingResult.dim,
