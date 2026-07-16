@@ -1,0 +1,43 @@
+{
+  "name": "kouchou-ai-serverless",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build --config vite.config.template.ts && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
+    "debug:pipeline": "vite-node scripts/debug-pipeline.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "dexie": "^4.0.11",
+    "dexie-react-hooks": "^4.4.0",
+    "ml-hclust": "^3.1.0",
+    "ml-kmeans": "^6.0.0",
+    "papaparse": "^5.5.3",
+    "plotly.js-dist-min": "^3.0.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "seedrandom": "^3.0.5",
+    "umap-js": "^1.4.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@types/seedrandom": "^3.0.8",
+    "@vitejs/plugin-react": "^4.5.2",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vite-node": "^3.2.4",
+    "vite-plugin-singlefile": "^2.2.0",
+    "vitest": "^3.2.4"
+  }
+}

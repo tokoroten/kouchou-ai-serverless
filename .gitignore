@@ -1,0 +1,13 @@
+# secrets — never commit
+.env
+.env.*
+
+node_modules/
+dist/
+public/report-template.html
+public/viewer.html
+coverage/
+*.local
+.DS_Store
+scratch-debug-result.json
+testdata/
