@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { exportPreprocessed } from "../lib/export";
 import { buildClusterTable } from "../lib/pipeline/clusterTable";
 import { clusterXY } from "../lib/pipeline/clusteringCore";
 import { type PipelineContext, memoryCheckpoints } from "../lib/pipeline/context";
@@ -291,6 +292,30 @@ export function InteractivePage({ projectId }: { projectId: string }) {
           <div className="row card">
             <button type="button" className="primary" onClick={runUmap} disabled={umapRunning}>
               {umapRunning ? "UMAP 実行中..." : coords ? "UMAP 再実行" : "UMAP 実行"}
+            </button>
+            <button
+              type="button"
+              title="意見抽出+ベクトル化の結果を元データごとファイルに保存(別ブラウザで後処理のみ再実行できます)"
+              onClick={() => {
+                if (preprocessed?.ext && preprocessed?.emb) {
+                  exportPreprocessed(
+                    {
+                      title: project.title,
+                      question: project.question,
+                      intro: project.intro,
+                      comments: project.comments,
+                      attributeColumns: project.attributeColumns,
+                      clusterNums: project.clusterNums,
+                      samplingNum: project.samplingNum,
+                      prompts: project.prompts,
+                    },
+                    preprocessed.ext,
+                    preprocessed.emb,
+                  );
+                }
+              }}
+            >
+              前処理データをエクスポート
             </button>
             <label style={{ margin: 0 }}>
               第1階層: {Math.min(lv1, lv2)}

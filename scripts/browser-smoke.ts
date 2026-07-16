@@ -120,10 +120,40 @@ async function main() {
   const filterSelects = await page.locator(".viewer .row select").count();
   check("属性フィルタ表示", filterSelects > 0, `フィルタ ${filterSelects} 個`);
 
+  // 単一 HTML エクスポート → ダウンロードした自己完結ファイルを file:// で開いて検証
+  const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
+  await page.getByRole("button", { name: /単一 HTML/ }).click();
+  const download = await downloadPromise;
+  const htmlPath = `${process.env.TEMP ?? "."}/kouchou-smoke-report.html`;
+  await download.saveAs(htmlPath);
+  const standalone = await browser.newPage();
+  await standalone.goto(`file:///${htmlPath.replace(/\\/g, "/")}`);
+  await standalone.waitForSelector(".viewer-chart canvas, .viewer-chart .plotly", { timeout: 60000 });
+  check("単一HTMLレポートがオフラインで開ける", (await standalone.locator(".cluster-card").count()) > 0);
+  await standalone.close();
+
   // リロードして IndexedDB 永続性確認(M2 受け入れ基準)
   await page.reload();
   await page.waitForSelector(".viewer-chart", { timeout: 30000 });
   check("リロード後もレポート表示(IndexedDB)", (await page.locator(".cluster-card").count()) > 0);
+
+  // 前処理データのエクスポート → インポート → 後処理のみ再実行(LLM抽出・埋め込みはスキップ)
+  await page.getByRole("button", { name: /リアルタイムモードで再クラスタリング/ }).click();
+  await page.getByRole("button", { name: "前処理データをエクスポート" }).waitFor({ timeout: 15000 });
+  const preDownloadPromise = page.waitForEvent("download", { timeout: 30000 });
+  await page.getByRole("button", { name: "前処理データをエクスポート" }).click();
+  const preDownload = await preDownloadPromise;
+  const prePath = `${process.env.TEMP ?? "."}/kouchou-smoke.preprocessed.json`;
+  await preDownload.saveAs(prePath);
+  check("前処理データエクスポート", true);
+  await page.goto(`${BASE}/#/`);
+  await page.locator('input[type="file"][accept="application/json"]').setInputFiles(prePath);
+  await page.waitForURL(/#\/run\//, { timeout: 15000 });
+  await page.getByRole("button", { name: "再開" }).click();
+  console.log("後処理のみ再実行中(抽出・埋め込みはスキップされるはず)...");
+  const resumeStart = Date.now();
+  await page.getByRole("button", { name: "レポートを開く" }).waitFor({ timeout: 300000 });
+  check("前処理インポート→後処理のみ完走", true, `${Math.round((Date.now() - resumeStart) / 1000)}秒`);
 
   const relevantPageErrors = pageErrors.filter(
     (e) => !e.includes("favicon") && !e.includes("WebGL") && !e.includes("gpu"),

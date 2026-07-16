@@ -139,6 +139,15 @@ export function RunPage({ projectId }: { projectId: string }) {
             レポートを開く
           </button>
         )}
+        {!isRunning && (
+          <button
+            type="button"
+            onClick={() => navigate(`/interactive/${projectId}`)}
+            title="前処理済みデータで UMAP をライブ表示しながらクラスタ数を対話調整"
+          >
+            リアルタイムモード
+          </button>
+        )}
         <button type="button" onClick={() => navigate("/")}>
           一覧へ戻る
         </button>

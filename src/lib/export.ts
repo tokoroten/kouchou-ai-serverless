@@ -1,4 +1,4 @@
-import type { EmbeddingResult, ExtractionResult } from "../types/project";
+import type { CommentRow, EmbeddingResult, ExtractionResult } from "../types/project";
 import type { Result } from "../types/result";
 
 // レポートのエクスポート(DESIGN §7.1)。
@@ -109,13 +109,25 @@ export async function exportSingleHtml(result: Result): Promise<void> {
   downloadBlob(new Blob([html], { type: "text/html" }), `${title}.html`);
 }
 
-// ---- 前処理済み中間データ(意見分解+ベクトル化)の入出力 ----
-// 一番コストがかかる前処理の結果を持ち出し、別ブラウザ/セッションで
+// ---- 前処理済みプロジェクトデータ(意見分解+ベクトル化)の入出力 ----
+// 一番コストがかかる前処理の結果を元データごと持ち出し、別ブラウザ/セッションで
 // ポストプロセス(クラスタリング以降)だけをやり直せるようにする。
 
+export type ProjectMeta = {
+  title: string;
+  question: string;
+  intro: string;
+  comments: CommentRow[];
+  attributeColumns: string[];
+  clusterNums: number[];
+  samplingNum: number;
+  prompts: { extraction: string; initialLabelling: string; mergeLabelling: string; overview: string };
+};
+
 export type PreprocessedData = {
-  formatVersion: 1;
+  formatVersion: 2;
   type: "kouchou-ai-preprocessed";
+  project: ProjectMeta;
   extraction: ExtractionResult;
   embedding: {
     argIds: string[];
@@ -124,11 +136,16 @@ export type PreprocessedData = {
   };
 };
 
-export function serializePreprocessed(extraction: ExtractionResult, embedding: EmbeddingResult): string {
+export function serializePreprocessed(
+  project: ProjectMeta,
+  extraction: ExtractionResult,
+  embedding: EmbeddingResult,
+): string {
   const bytes = new Uint8Array(embedding.vectors.buffer, embedding.vectors.byteOffset, embedding.vectors.byteLength);
   const data: PreprocessedData = {
-    formatVersion: 1,
+    formatVersion: 2,
     type: "kouchou-ai-preprocessed",
+    project,
     extraction,
     embedding: {
       argIds: embedding.argIds,
@@ -139,17 +156,27 @@ export function serializePreprocessed(extraction: ExtractionResult, embedding: E
   return JSON.stringify(data);
 }
 
-export function exportPreprocessed(extraction: ExtractionResult, embedding: EmbeddingResult, title: string): void {
-  const blob = new Blob([serializePreprocessed(extraction, embedding)], { type: "application/json" });
-  downloadBlob(blob, `${title}.preprocessed.json`);
+export function exportPreprocessed(
+  project: ProjectMeta,
+  extraction: ExtractionResult,
+  embedding: EmbeddingResult,
+): void {
+  const blob = new Blob([serializePreprocessed(project, extraction, embedding)], { type: "application/json" });
+  downloadBlob(blob, `${project.title}.preprocessed.json`);
 }
 
-export function parsePreprocessed(text: string): { extraction: ExtractionResult; embedding: EmbeddingResult } {
+export function parsePreprocessed(text: string): {
+  project: ProjectMeta;
+  extraction: ExtractionResult;
+  embedding: EmbeddingResult;
+} {
   const data = JSON.parse(text) as PreprocessedData;
   if (data.type !== "kouchou-ai-preprocessed") throw new Error("前処理データのファイルではありません");
+  if (!data.project || !data.extraction || !data.embedding) throw new Error("前処理データが不完全です");
   const bytes = base64ToBytes(data.embedding.vectorsBase64);
   const vectors = new Float32Array(bytes.buffer, 0, bytes.byteLength / 4);
   return {
+    project: data.project,
     extraction: data.extraction,
     embedding: { argIds: data.embedding.argIds, dim: data.embedding.dim, vectors },
   };

@@ -1,9 +1,12 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useRef } from "react";
-import { exportResultJson, parseResultJson } from "../lib/export";
+import { exportResultJson, parsePreprocessed, parseResultJson } from "../lib/export";
 import { navigate } from "../lib/router";
-import { db, deleteProjectData } from "../lib/storage/db";
+import { dexieStepStore } from "../lib/storage/checkpoints";
+import { db, deleteProjectData, requestPersistentStorage } from "../lib/storage/db";
+import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
+import { resolveEndpoint } from "../types/settings";
 
 // ホーム / レポート一覧(DESIGN §7-1)。
 
@@ -19,10 +22,50 @@ export function HomePage() {
   const reports = useLiveQuery(() => db.reports.orderBy("createdAt").reverse().toArray(), []);
   const projects = useLiveQuery(() => db.projects.orderBy("createdAt").reverse().toArray(), []);
   const importRef = useRef<HTMLInputElement>(null);
+  const { settings } = useSettings();
 
+  // Result JSON と前処理データ(.preprocessed.json)の両方を受け付ける
   const importJson = async (file: File) => {
     try {
-      const result = parseResultJson(await file.text());
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("JSON として読み込めませんでした");
+      }
+      if ((parsed as { type?: string })?.type === "kouchou-ai-preprocessed") {
+        // 前処理済みプロジェクトのインポート: 抽出+埋め込み結果を復元し、後処理から再開できる
+        const { project: meta, extraction, embedding } = parsePreprocessed(text);
+        await requestPersistentStorage();
+        const project: Project = {
+          id: crypto.randomUUID(),
+          title: meta.title,
+          question: meta.question,
+          intro: meta.intro,
+          createdAt: Date.now(),
+          comments: meta.comments,
+          attributeColumns: meta.attributeColumns,
+          settingsSnapshot: {
+            chat: resolveEndpoint(settings, "chat"),
+            embedding: resolveEndpoint(settings, "embedding"),
+            concurrency: settings.concurrency,
+          },
+          clusterNums: meta.clusterNums,
+          prompts: meta.prompts,
+          samplingNum: meta.samplingNum,
+          status: "paused",
+          currentStep: "clustering",
+          tokenUsage: { input: 0, output: 0, total: 0 },
+        };
+        await db.projects.put(project);
+        const store = dexieStepStore(project.id);
+        await store.put("extraction", extraction);
+        await store.put("embedding", embedding);
+        navigate(`/run/${project.id}`);
+        return;
+      }
+      const result = parseResultJson(text);
       const id = crypto.randomUUID();
       await db.reports.put({
         id,
@@ -82,6 +125,9 @@ export function HomePage() {
                   <div className="row">
                     <button type="button" className="primary" onClick={() => navigate(`/run/${project.id}`)}>
                       {project.status === "created" ? "実行" : "再開 / 詳細"}
+                    </button>
+                    <button type="button" onClick={() => navigate(`/interactive/${project.id}`)}>
+                      リアルタイム
                     </button>
                     <button
                       type="button"

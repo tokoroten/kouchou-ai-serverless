@@ -313,9 +313,16 @@ export function WizardPage() {
             <li>チャット出力: 約 {estimate.chatOutputTokens.toLocaleString()} トークン</li>
             <li>埋め込み: 約 {estimate.embeddingTokens.toLocaleString()} トークン</li>
           </ul>
-          <p>
-            参考費用(gpt-4o-mini + text-embedding-3-small 価格): <b>約 ${estimateUsd(estimate).toFixed(3)}</b>
-          </p>
+          {resolveEndpoint(settings, "chat").baseUrl.startsWith("local:") ||
+          resolveEndpoint(settings, "embedding").baseUrl.startsWith("local:") ? (
+            <p>
+              ローカル実行(Gemini Nano / ブラウザ内埋め込み)が選択されているため、その分の API 費用は <b>0円</b> です。
+            </p>
+          ) : (
+            <p>
+              参考費用(gpt-4o-mini + text-embedding-3-small 価格): <b>約 ${estimateUsd(estimate).toFixed(3)}</b>
+            </p>
+          )}
           <p className="note">
             ※ あくまで概算です。処理はいつでも中断でき、途中経過はブラウザに保存されるため再開できます。
           </p>

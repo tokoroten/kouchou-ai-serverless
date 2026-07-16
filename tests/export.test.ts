@@ -19,7 +19,17 @@ describe("parseResultJson", () => {
 });
 
 describe("前処理データの直列化", () => {
-  it("embeddings が Float32Array のままラウンドトリップする", () => {
+  it("プロジェクト情報と embeddings がラウンドトリップする", () => {
+    const project = {
+      title: "T",
+      question: "Q",
+      intro: "I",
+      comments: [{ commentId: "0", body: "コメント", attributes: { age: "20代" } }],
+      attributeColumns: ["age"],
+      clusterNums: [2, 4],
+      samplingNum: 30,
+      prompts: { extraction: "e", initialLabelling: "i", mergeLabelling: "m", overview: "o" },
+    };
     const extraction = {
       args: [
         { argId: "A0_0", argument: "a" },
@@ -35,10 +45,16 @@ describe("前処理データの直列化", () => {
       dim: 3,
       vectors: Float32Array.from([1.5, -2.25, 0, 0.125, 4, -8]),
     };
-    const text = serializePreprocessed(extraction, embedding);
+    const text = serializePreprocessed(project, extraction, embedding);
     const parsed = parsePreprocessed(text);
+    expect(parsed.project).toEqual(project);
     expect(parsed.extraction).toEqual(extraction);
     expect(parsed.embedding.dim).toBe(3);
     expect(Array.from(parsed.embedding.vectors)).toEqual([1.5, -2.25, 0, 0.125, 4, -8]);
+  });
+
+  it("不正なファイルは拒否する", () => {
+    expect(() => parsePreprocessed('{"type": "other"}')).toThrow();
+    expect(() => parsePreprocessed('{"type": "kouchou-ai-preprocessed"}')).toThrow();
   });
 });
