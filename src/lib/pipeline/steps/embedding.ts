@@ -30,9 +30,12 @@ export async function embedding(args: ExtractedArgument[], ctx: PipelineContext)
       const batchTexts = texts.slice(start, start + BATCH);
       let vectors: Float32Array[];
       if (local) {
-        const { embedLocally } = await import("../../llm/localEmbedding");
-        vectors = await embedLocally(batchTexts, ctx.embedding.model, (message) =>
-          ctx.onProgress?.({ step: "embedding", done: batchIndex, total, message }),
+        const { embedLocallyViaWorker } = await import("../../llm/localEmbedding");
+        vectors = await embedLocallyViaWorker(
+          batchTexts,
+          ctx.embedding.model,
+          (message) => ctx.onProgress?.({ step: "embedding", done: batchIndex, total, message }),
+          ctx.signal,
         );
       } else {
         vectors = await requestEmbeddings(ctx.embedding, {

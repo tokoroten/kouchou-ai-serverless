@@ -137,6 +137,7 @@ export function ReportViewer({ result }: Props) {
               argumentList={result.arguments}
               level={treemapLevel}
               onTreeZoom={setTreemapLevel}
+              filteredArgumentIds={filteredIds}
             />
           )}
         </div>

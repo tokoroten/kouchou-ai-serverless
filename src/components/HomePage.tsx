@@ -79,6 +79,24 @@ export function HomePage() {
     }
   };
 
+  // 同梱サンプルレポート(実データで生成した本家互換 JSON)を開く
+  const openSample = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.BASE_URL}sample-report.json`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = parseResultJson(await response.text());
+      await db.reports.put({
+        id: "sample",
+        title: result.config?.name || "サンプルレポート",
+        createdAt: Date.now(),
+        result,
+      });
+      navigate("/report/sample");
+    } catch (e) {
+      alert(`サンプルの読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -89,6 +107,9 @@ export function HomePage() {
           </button>
           <button type="button" onClick={() => importRef.current?.click()}>
             JSON インポート
+          </button>
+          <button type="button" onClick={openSample} title="同梱のサンプルレポート(2,000件の仮想アンケート)を開く">
+            サンプルを見る
           </button>
           <input
             ref={importRef}

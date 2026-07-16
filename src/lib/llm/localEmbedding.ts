@@ -33,6 +33,82 @@ async function getPipeline(model: string, onStatus?: (message: string) => void) 
   return pipe;
 }
 
+// ---- Worker 経由の実行(ブラウザ用。WASM 時にメインスレッドを塞がない) ----
+
+let embeddingWorker: Worker | null = null;
+let requestSeq = 0;
+// Worker 破棄時に、待機中の他リクエストも失敗させるための登録簿
+const pendingRejects = new Map<number, (reason: unknown) => void>();
+
+function destroyEmbeddingWorker(reason: unknown): void {
+  embeddingWorker?.terminate();
+  embeddingWorker = null;
+  for (const reject of pendingRejects.values()) reject(reason);
+  pendingRejects.clear();
+}
+
+/**
+ * ローカル埋め込みを Web Worker で実行する。Worker が使えない環境(Node)では
+ * メインスレッドで直接実行する。Worker とモデルは呼び出し間で使い回される。
+ */
+export function embedLocallyViaWorker(
+  texts: string[],
+  model: string,
+  onStatus?: (message: string) => void,
+  signal?: AbortSignal,
+): Promise<Float32Array[]> {
+  if (typeof Worker === "undefined") return embedLocally(texts, model, onStatus);
+  if (!embeddingWorker) {
+    embeddingWorker = new Worker(new URL("../workers/embedding.worker.ts", import.meta.url), { type: "module" });
+  }
+  const worker = embeddingWorker;
+  const id = ++requestSeq;
+  return new Promise<Float32Array[]>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      // 中断時は Worker ごと破棄する(次回呼び出しで再生成・モデル再ロード)。
+      // 同じ Worker を待っている他のリクエストもここで reject される。
+      destroyEmbeddingWorker(new DOMException("Aborted", "AbortError"));
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const onMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (message.id !== id) return;
+      if (message.type === "status") {
+        onStatus?.(message.message);
+      } else if (message.type === "done") {
+        cleanup();
+        const { dim, flat } = message as { dim: number; flat: Float32Array };
+        const vectors: Float32Array[] = [];
+        for (let i = 0; i * dim < flat.length; i++) {
+          vectors.push(flat.slice(i * dim, (i + 1) * dim));
+        }
+        resolve(vectors);
+      } else if (message.type === "error") {
+        cleanup();
+        reject(new Error(message.message));
+      }
+    };
+    function cleanup() {
+      pendingRejects.delete(id);
+      worker.removeEventListener("message", onMessage);
+      signal?.removeEventListener("abort", onAbort);
+    }
+    pendingRejects.set(id, (reason) => {
+      worker.removeEventListener("message", onMessage);
+      signal?.removeEventListener("abort", onAbort);
+      reject(reason instanceof Error || reason instanceof DOMException ? reason : new Error(String(reason)));
+    });
+    worker.addEventListener("message", onMessage);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    worker.postMessage({ type: "embed", id, texts, model });
+  });
+}
+
 /**
  * テキスト配列をローカルで埋め込む。texts と同順の Float32Array 配列を返す。
  * e5 系モデルの流儀に従い "passage: " プレフィックスを付ける。

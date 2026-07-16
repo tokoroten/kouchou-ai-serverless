@@ -33,13 +33,33 @@ export function HierarchyList({ clusterList, argumentList, filteredArgumentIds }
     return map;
   }, [argumentList, filteredArgumentIds]);
 
+  // フィルタ適用後のクラスタ別件数(未フィルタ時は cluster.value と一致する)
+  const countByCluster = useMemo(() => {
+    if (!filteredArgumentIds) return null;
+    const counts = new Map<string, number>();
+    for (const arg of argumentList) {
+      if (!filteredArgumentIds.has(arg.arg_id)) continue;
+      for (const id of arg.cluster_ids) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [argumentList, filteredArgumentIds]);
+
   const renderCluster = (cluster: Cluster): React.ReactNode => {
+    const count = countByCluster ? (countByCluster.get(cluster.id) ?? 0) : cluster.value;
+    // フィルタで空になった枝は表示しない
+    if (countByCluster && count === 0) return null;
     const children = childrenByParent.get(cluster.id) ?? [];
     const args = children.length === 0 ? (argsByCluster.get(cluster.id) ?? []) : [];
     return (
       <details key={cluster.id} className="hierarchy-node" open={cluster.level <= 1}>
         <summary>
-          <b>{cluster.label}</b> <span className="note">({cluster.value.toLocaleString()} 件)</span>
+          <b>{cluster.label}</b>{" "}
+          <span className="note">
+            ({count.toLocaleString()}
+            {countByCluster ? ` / ${cluster.value.toLocaleString()}` : ""} 件)
+          </span>
         </summary>
         {cluster.takeaway && <p className="note hierarchy-takeaway">{cluster.takeaway}</p>}
         <div className="hierarchy-children">

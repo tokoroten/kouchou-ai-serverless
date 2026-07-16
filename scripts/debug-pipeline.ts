@@ -6,10 +6,11 @@
  *   DEBUG_PROVIDER: openai | lmstudio | openrouter(chat のみ切替。embedding は常に OpenAI)
  * 本番コードと同じエンジン(src/lib/pipeline)をそのまま実行する。
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import Papa from "papaparse";
 import { normalizeComments } from "../src/lib/csv";
 import { probeChat } from "../src/lib/llm/client";
+import type { Checkpoints } from "../src/lib/pipeline/context";
 import { type PipelineContext, memoryCheckpoints } from "../src/lib/pipeline/context";
 import { runPipeline } from "../src/lib/pipeline/orchestrator";
 import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overviewPrompt } from "../src/prompts";
@@ -54,6 +55,59 @@ const embedding: EndpointConfig = {
   model: "text-embedding-3-small",
 };
 
+// DEBUG_STATE=dir を指定するとファイルベースのチェックポイントで中断・再開できる
+function fileCheckpoints(dir: string): Checkpoints {
+  mkdirSync(dir, { recursive: true });
+  const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return {
+    async getExtraction(commentId) {
+      const path = `${dir}/ext_${safe(commentId)}.json`;
+      return existsSync(path) ? JSON.parse(readFileSync(path, "utf-8")) : undefined;
+    },
+    async putExtraction(commentId, args) {
+      writeFileSync(`${dir}/ext_${safe(commentId)}.json`, JSON.stringify(args));
+    },
+    async getChunk(step, key) {
+      const path = `${dir}/${safe(step)}_${safe(key)}.json`;
+      if (!existsSync(path)) return undefined;
+      const raw = JSON.parse(readFileSync(path, "utf-8"));
+      // Float32Array / Int32Array は type タグ付きで復元
+      if (raw?.__f32) return Float32Array.from(raw.__f32);
+      if (raw?.__clustering) {
+        return {
+          ...raw.__clustering,
+          x: Float32Array.from(raw.__clustering.x),
+          y: Float32Array.from(raw.__clustering.y),
+          assignments: raw.__clustering.assignments.map((a: number[]) => Int32Array.from(a)),
+        };
+      }
+      if (raw?.__coords) {
+        return { x: Float32Array.from(raw.__coords.x), y: Float32Array.from(raw.__coords.y) };
+      }
+      return raw;
+    },
+    async putChunk(step, key, data) {
+      const path = `${dir}/${safe(step)}_${safe(key)}.json`;
+      let serializable = data;
+      if (data instanceof Float32Array) {
+        serializable = { __f32: Array.from(data) };
+      } else if (data && typeof data === "object" && data.assignments) {
+        serializable = {
+          __clustering: {
+            ...data,
+            x: Array.from(data.x),
+            y: Array.from(data.y),
+            assignments: data.assignments.map((a: Int32Array) => Array.from(a)),
+          },
+        };
+      } else if (data && typeof data === "object" && data.x instanceof Float32Array) {
+        serializable = { __coords: { x: Array.from(data.x), y: Array.from(data.y) } };
+      }
+      writeFileSync(path, JSON.stringify(serializable));
+    },
+  };
+}
+
 async function main() {
   console.log(`=== chat 応答テスト (${provider}: ${chat.model}) ===`);
   const probe = await probeChat(chat, 30_000);
@@ -71,7 +125,7 @@ async function main() {
     chat,
     embedding,
     concurrency: 8,
-    checkpoints: memoryCheckpoints(),
+    checkpoints: process.env.DEBUG_STATE ? fileCheckpoints(process.env.DEBUG_STATE) : memoryCheckpoints(),
     onProgress: (e) => {
       const line = `${e.step}: ${e.done}/${e.total}${e.message ? ` (${e.message})` : ""}`;
       if (line !== lastLog && (e.done === e.total || e.done % 10 === 0 || e.total < 20)) {
@@ -151,7 +205,7 @@ async function main() {
   console.log(`属性付き args: ${attrCount}/${result.arguments.length}`);
   console.log(`トークン: in=${usage.input} out=${usage.output}`);
   console.log(`overview: ${result.overview.slice(0, 120)}...`);
-  console.log(`level1 ラベル:`);
+  console.log("level1 ラベル:");
   for (const c of result.clusters.filter((c) => c.level === 1)) {
     console.log(`  - ${c.label} (${c.value}件, density_pct=${c.density_rank_percentile.toFixed(2)})`);
   }

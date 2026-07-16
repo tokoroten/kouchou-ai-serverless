@@ -11,3 +11,4 @@ coverage/
 .DS_Store
 scratch-debug-result.json
 testdata/
+scratch-2000-run.log

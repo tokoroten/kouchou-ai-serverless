@@ -25,6 +25,7 @@ type RunnerStore = RunnerState & {
 };
 
 let abortController: AbortController | null = null;
+let releaseLock: (() => void) | null = null;
 
 // 実行中はどの画面にいてもタブ閉じ警告を出す(閉じてもチェックポイントから再開はできる)
 const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -45,7 +46,34 @@ export const useRunner = create<RunnerStore>((set, get) => ({
   },
 
   start: async (project: Project) => {
-    if (get().runningProjectId) return; // 二重実行防止
+    if (get().runningProjectId) return; // 同一タブ内の二重実行防止
+
+    // タブ間の二重実行防止(Web Locks)。同じプロジェクトを別タブで同時に走らせると
+    // IndexedDB のチェックポイントを競合更新するため、ロックが取れなければ実行しない。
+    if (navigator.locks) {
+      const granted = await new Promise<boolean>((resolve) => {
+        let release: (() => void) | null = null;
+        navigator.locks
+          .request(`kouchou-run-${project.id}`, { ifAvailable: true }, async (lock) => {
+            if (!lock) {
+              resolve(false);
+              return;
+            }
+            resolve(true);
+            // 実行終了までロックを保持する
+            await new Promise<void>((r) => {
+              release = r;
+            });
+          })
+          .catch(() => resolve(true)); // ロック API の失敗時は実行を優先
+        releaseLock = () => release?.();
+      });
+      if (!granted) {
+        set({ error: "このプロジェクトは別のタブで実行中です。そちらのタブを閉じるか完了を待ってください。" });
+        return;
+      }
+    }
+
     abortController = new AbortController();
     set({
       runningProjectId: project.id,
@@ -109,6 +137,8 @@ export const useRunner = create<RunnerStore>((set, get) => ({
     } finally {
       abortController = null;
       window.removeEventListener("beforeunload", onBeforeUnload);
+      releaseLock?.();
+      releaseLock = null;
     }
   },
 }));
