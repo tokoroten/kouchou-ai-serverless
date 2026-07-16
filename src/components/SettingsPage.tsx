@@ -48,6 +48,8 @@ function ProviderKeysCard() {
               <input
                 style={{ flex: 3, minWidth: 240 }}
                 type="password"
+                autoComplete="off"
+                name={`api-key-${preset.id}`}
                 placeholder={
                   KEY_REQUIRED.includes(preset.id) ? "API キー (必須)" : "API キー (認証を有効にしている場合のみ)"
                 }
