@@ -15,6 +15,8 @@ type Props = {
   densityFilter?: { maxPercentile: number; minValue: number };
   /** 属性フィルタ: 指定時は含まれない点をグレー表示(本家と同じ) */
   filteredArgumentIds?: Set<string> | null;
+  /** クラスタの凸包を表示するか(本家 showConvexHull) */
+  showConvexHull?: boolean;
   onPointClick?: (argId: string) => void;
 };
 
@@ -25,6 +27,7 @@ export function ScatterChart({
   showClusterLabels = true,
   densityFilter,
   filteredArgumentIds,
+  showConvexHull = false,
   onPointClick,
 }: Props) {
   const { data, annotations } = useMemo(() => {
@@ -42,6 +45,31 @@ export function ScatterChart({
     const data: any[] = [];
     // biome-ignore lint/suspicious/noExplicitAny: Plotly annotations
     const annotations: any[] = [];
+
+    // 凸包トレース(本家と同じ: SVG scatter は WebGL の背面に描画される)
+    if (showConvexHull) {
+      targetClusters.forEach((cluster, index) => {
+        const clusterArgs = argumentList.filter((arg) => arg.cluster_ids.includes(cluster.id));
+        if (clusterArgs.length < 3) return;
+        const hull = convexHull(clusterArgs.map((arg) => [arg.x, arg.y] as [number, number]));
+        if (hull.length < 3) return;
+        const color = SOFT_COLORS[index % SOFT_COLORS.length];
+        data.push({
+          x: [...hull.map((p) => p[0]), hull[0][0]],
+          y: [...hull.map((p) => p[1]), hull[0][1]],
+          mode: "lines",
+          fill: "toself",
+          fillcolor: `${color}33`,
+          line: { color, width: 1.5 },
+          type: "scatter",
+          hoveron: "fills",
+          hoverinfo: "text",
+          text: cluster.label,
+          hoverlabel: { bgcolor: color, bordercolor: color, font: { color: "white", size: 13 } },
+          showlegend: false,
+        });
+      });
+    }
 
     for (const cluster of targetClusters) {
       const allArgs = argumentList.filter((arg) => arg.cluster_ids.includes(cluster.id));
@@ -100,7 +128,7 @@ export function ScatterChart({
       }
     }
     return { data, annotations };
-  }, [clusterList, argumentList, targetLevel, showClusterLabels, densityFilter, filteredArgumentIds]);
+  }, [clusterList, argumentList, targetLevel, showClusterLabels, densityFilter, filteredArgumentIds, showConvexHull]);
 
   const layout = useMemo(
     () => ({
@@ -128,4 +156,47 @@ export function ScatterChart({
       }}
     />
   );
+}
+
+/** 凸包計算(本家 ScatterChart.tsx の Gift wrapping アルゴリズムの移植) */
+function convexHull(points: [number, number][]): [number, number][] {
+  if (points.length < 3) return points;
+
+  let start = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i][0] < points[start][0] || (points[i][0] === points[start][0] && points[i][1] < points[start][1])) {
+      start = i;
+    }
+  }
+
+  const distanceSquared = (a: [number, number], b: [number, number]) => {
+    const dx = a[0] - b[0];
+    const dy = a[1] - b[1];
+    return dx * dx + dy * dy;
+  };
+
+  const hull: [number, number][] = [];
+  let current = start;
+
+  do {
+    hull.push(points[current]);
+    let next = (current + 1) % points.length;
+    for (let i = 0; i < points.length; i++) {
+      if (i === current) continue;
+      const cross =
+        (points[next][0] - points[current][0]) * (points[i][1] - points[current][1]) -
+        (points[next][1] - points[current][1]) * (points[i][0] - points[current][0]);
+      if (cross < 0) {
+        next = i;
+      } else if (cross === 0) {
+        // 3点が一直線上にある場合は、current からより遠い点を採用
+        if (distanceSquared(points[current], points[i]) > distanceSquared(points[current], points[next])) {
+          next = i;
+        }
+      }
+    }
+    current = next;
+  } while (current !== start && hull.length < points.length);
+
+  return hull;
 }

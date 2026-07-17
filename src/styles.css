@@ -258,6 +258,26 @@ table.preview-table {
   margin: 6px 0;
 }
 
+/* フィルタパネル */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 400;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--card-bg);
+}
+.filter-chip.checked {
+  border-color: var(--primary);
+  background: #eff6ff;
+}
+.filter-chip .note {
+  margin-left: 4px;
+}
+
 /* 階層リスト */
 .hierarchy-list details {
   border: 1px solid var(--border);

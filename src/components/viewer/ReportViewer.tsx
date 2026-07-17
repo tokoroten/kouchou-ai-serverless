@@ -1,13 +1,21 @@
 import { useMemo, useState } from "react";
 import type { Cluster, Result } from "../../types/result";
-import { AttributeFilter, type FilterState, applyFilter, propertyNames } from "./AttributeFilter";
+import {
+  AttributeFilter,
+  EMPTY_FILTER,
+  type FilterParams,
+  computeAttributeMetas,
+  filterArgumentIds,
+} from "./AttributeFilter";
 import { HierarchyList } from "./HierarchyList";
 import { ScatterChart } from "./ScatterChart";
 import { TreemapChart } from "./TreemapChart";
 
 // レポートビューア本体(本家 public-viewer 相当)。
 // アプリ内(ViewerPage)と単一HTMLレポート(viewer-standalone)の両方から使う。
-// タブ: 散布図 / 濃い意見グループ(密度) / ツリーマップ / 階層リスト。属性フィルタ対応。
+// タブ: 散布図 / 濃い意見グループ(密度) / ツリーマップ / 階層リスト。
+// 本家互換の属性フィルタ(カテゴリ/数値レンジスライダー/テキスト検索)と
+// ラベル表示・凸包表示のトグルに対応。
 
 type ChartTab = "scatter" | "density" | "treemap" | "hierarchy";
 
@@ -19,7 +27,9 @@ export function ReportViewer({ result }: Props) {
   const [tab, setTab] = useState<ChartTab>("scatter");
   const [treemapLevel, setTreemapLevel] = useState("0");
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterState>({});
+  const [filter, setFilter] = useState<FilterParams>(EMPTY_FILTER);
+  const [showLabels, setShowLabels] = useState(true);
+  const [showHull, setShowHull] = useState(false);
 
   const levels = useMemo(
     () => [...new Set(result.clusters.filter((c) => c.level > 0).map((c) => c.level))].sort((a, b) => a - b),
@@ -28,8 +38,8 @@ export function ReportViewer({ result }: Props) {
   const [scatterLevel, setScatterLevel] = useState(1);
   const deepestLevel = levels[levels.length - 1] ?? 1;
 
-  const filteredIds = useMemo(() => applyFilter(result, filter), [result, filter]);
-  const hasProperties = propertyNames(result).length > 0;
+  const attributeMetas = useMemo(() => computeAttributeMetas(result.arguments), [result]);
+  const filteredIds = useMemo(() => filterArgumentIds(result.arguments, filter), [result, filter]);
 
   const selectedCluster: Cluster | undefined = useMemo(
     () => result.clusters.find((c) => c.id === selectedClusterId),
@@ -106,9 +116,36 @@ export function ReportViewer({ result }: Props) {
             ))}
           </select>
         )}
+        {(tab === "scatter" || tab === "density") && (
+          <>
+            <label style={{ fontWeight: 400, margin: 0 }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto", marginRight: 4 }}
+                checked={showLabels}
+                onChange={(e) => setShowLabels(e.target.checked)}
+              />
+              ラベル表示
+            </label>
+            <label style={{ fontWeight: 400, margin: 0 }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto", marginRight: 4 }}
+                checked={showHull}
+                onChange={(e) => setShowHull(e.target.checked)}
+              />
+              凸包表示
+            </label>
+          </>
+        )}
       </nav>
 
-      {hasProperties && <AttributeFilter result={result} filter={filter} onChange={setFilter} />}
+      <AttributeFilter metas={attributeMetas} filter={filter} onChange={setFilter} />
+      {filteredIds && (
+        <p className="note">
+          フィルタ適用中: {filteredIds.size.toLocaleString()} / {result.arguments.length.toLocaleString()} 件が該当
+        </p>
+      )}
 
       {tab !== "hierarchy" ? (
         <div className="viewer-chart">
@@ -118,6 +155,8 @@ export function ReportViewer({ result }: Props) {
               argumentList={result.arguments}
               targetLevel={scatterLevel}
               filteredArgumentIds={filteredIds}
+              showClusterLabels={showLabels}
+              showConvexHull={showHull}
               onPointClick={(argId) => selectClusterFromPoint(argId, scatterLevel)}
             />
           )}
@@ -128,6 +167,8 @@ export function ReportViewer({ result }: Props) {
               targetLevel={deepestLevel}
               densityFilter={{ maxPercentile: 0.3, minValue: 3 }}
               filteredArgumentIds={filteredIds}
+              showClusterLabels={showLabels}
+              showConvexHull={showHull}
               onPointClick={(argId) => selectClusterFromPoint(argId, deepestLevel)}
             />
           )}
