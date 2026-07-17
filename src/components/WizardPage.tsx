@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { type CsvPreview, normalizeComments, parseCsvFile } from "../lib/csv";
+import { type CsvPreview, detectBodyColumn, normalizeComments, parseCsvFile } from "../lib/csv";
 import { estimateCost, estimateUsd } from "../lib/estimate";
 import { calculateRecommendedClusterNums } from "../lib/pipeline/clusterNums";
 import { navigate } from "../lib/router";
@@ -87,11 +87,13 @@ export function WizardPage() {
       setPreview(p);
       setFile(f);
       setFileName(f.name);
-      // comment-body / comment-id 列を自動検出
-      if (p.columns.includes("comment-body")) setBodyColumn("comment-body");
-      else setBodyColumn(p.columns[0] ?? "");
-      setIdColumn(p.columns.includes("comment-id") ? "comment-id" : "");
-      setAttributeColumns([]);
+      // 再パース(エンコーディング変更等)でユーザの列選択を失わないよう、
+      // 既存の選択が新しい列にも存在すればそのまま維持する
+      setBodyColumn((prev) => (prev && p.columns.includes(prev) ? prev : detectBodyColumn(p.columns, p.rows)));
+      setIdColumn((prev) =>
+        prev && p.columns.includes(prev) ? prev : p.columns.includes("comment-id") ? "comment-id" : "",
+      );
+      setAttributeColumns((prev) => prev.filter((c) => p.columns.includes(c)));
       if (!title) setTitle(f.name.replace(/\.csv$/i, ""));
     } catch (e) {
       setError(`CSV の読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
@@ -135,10 +137,27 @@ export function WizardPage() {
     navigate(`/run/${project.id}`);
   };
 
+  const chatEndpointNow = resolveEndpoint(settings, "chat");
+  const embeddingEndpointNow = resolveEndpoint(settings, "embedding");
+  const settingsMissing = !chatEndpointNow.baseUrl || !embeddingEndpointNow.baseUrl;
+
   return (
     <div>
       <h1>新規レポート作成 — Step {step}/4</h1>
+      {settingsMissing && (
+        <div className="error-box">
+          LLM プロバイダが未設定です(チャット{chatEndpointNow.baseUrl ? "設定済み" : "未設定"} / 埋め込み
+          {embeddingEndpointNow.baseUrl ? "設定済み" : "未設定"})。先に <a href="#/settings">設定画面</a> で API
+          キーとモデルを設定してください。設定しないままでは Step 4 で実行できません。
+        </div>
+      )}
       {error && <div className="error-box">{error}</div>}
+      {step > 1 && preview && (
+        <p className="note">
+          入力: {fileName} / 意見本文の列 = <b>{bodyColumn}</b> / 有効コメント {comments.length.toLocaleString()} 件
+          {attributeColumns.length > 0 && <> / 属性: {attributeColumns.join(", ")}</>}
+        </p>
+      )}
 
       {step === 1 && (
         <div className="card">
@@ -303,7 +322,11 @@ export function WizardPage() {
 
       {step === 4 && (
         <div className="card">
-          <h2>Step 4: コスト見積り</h2>
+          <h2>Step 4: 確認とコスト見積り</h2>
+          <p>
+            分析対象: <b>{bodyColumn}</b> 列(最初のコメント:「{comments[0]?.body.slice(0, 60)}
+            {(comments[0]?.body.length ?? 0) > 60 ? "…" : ""}」)
+          </p>
           <p>
             有効コメント {comments.length.toLocaleString()} 件 / chat 呼び出し 約 {estimate.chatCalls.toLocaleString()}{" "}
             回

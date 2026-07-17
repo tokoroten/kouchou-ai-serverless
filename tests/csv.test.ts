@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { normalizeComments } from "../src/lib/csv";
+import { detectBodyColumn, normalizeComments } from "../src/lib/csv";
+
+describe("detectBodyColumn", () => {
+  it("comment-body 列があれば最優先", () => {
+    const rows = [{ "comment-body": "短い", memo: "とても長いテキストがここに入っています" }];
+    expect(detectBodyColumn(["comment-body", "memo"], rows)).toBe("comment-body");
+  });
+
+  it("平均文字数が最長の列を選ぶ(先頭列を無条件採用しない)", () => {
+    const rows = [
+      {
+        iq: "115",
+        age: "11",
+        reasoning: "この法案に賛成する理由は、AIが人権を持つことでより良い社会が作れると思うからです。",
+      },
+      { iq: "77", age: "32", reasoning: "正直なところ、この法案についてはよくわからない部分が多いです。" },
+    ];
+    expect(detectBodyColumn(["iq", "age", "reasoning"], rows)).toBe("reasoning");
+  });
+});
 
 describe("normalizeComments", () => {
   it("空・空白のみの comment-body を除外する(本家 #583)", () => {

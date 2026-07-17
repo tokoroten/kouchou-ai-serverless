@@ -31,6 +31,28 @@ export function parseCsvFile(file: File, encoding: "UTF-8" | "Shift_JIS" = "UTF-
 }
 
 /**
+ * 意見本文の列を自動検出する。
+ * 1. 名前が comment-body ならそれを最優先
+ * 2. それ以外は、先頭50行の平均文字数が最も長い列(自由記述はほぼ確実に最長)
+ * 先頭列を無条件に採用してはいけない(ID や数値列であることが多い)。
+ */
+export function detectBodyColumn(columns: string[], rows: Record<string, string>[]): string {
+  if (columns.includes("comment-body")) return "comment-body";
+  const sample = rows.slice(0, 50);
+  let best = columns[0] ?? "";
+  let bestScore = -1;
+  for (const col of columns) {
+    const lengths = sample.map((row) => (row[col] ?? "").length);
+    const avg = lengths.length > 0 ? lengths.reduce((a, b) => a + b, 0) / lengths.length : 0;
+    if (avg > bestScore) {
+      bestScore = avg;
+      best = col;
+    }
+  }
+  return best;
+}
+
+/**
  * パース済み CSV 行を CommentRow に正規化する。
  * - comment-body が空・空白のみの行は除外する(本家 #583 と同じ)
  * - comment-id 列がなければ行番号を振る
