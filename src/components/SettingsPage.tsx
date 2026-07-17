@@ -136,36 +136,44 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
 
   const endpoint = resolveEndpoint(settings, slot);
   const preset = PRESETS.find((p) => p.id === selection.provider);
-  // 標準モデルリスト + 接続テスト/自動取得したモデルリストをマージ
+  // 標準モデルリスト(価格付き・安い順) + 自動取得したモデルリストをマージ
   const knownModels = (slot === "chat" ? preset?.knownChatModels : preset?.knownEmbeddingModels) ?? [];
-  const modelChoices = [...new Set([...knownModels, ...models])];
+  const [fetchedPrices, setFetchedPrices] = useState<Map<string, string>>(new Map());
+  const priceOf = (id: string) => knownModels.find((m) => m.id === id)?.price ?? fetchedPrices.get(id);
+  const modelChoices = [...new Set([...knownModels.map((m) => m.id), ...models])];
 
-  // プロバイダ選択時にモデル一覧を自動取得(失敗しても標準リストで選べるので無視)
+  // プロバイダ選択時にモデル一覧を自動取得(失敗しても標準リストで選べるので無視)。
+  // pricing を返すプロバイダ(OpenRouter 等)は実勢価格も表示する。
   const autoFetchModels = async (id: PresetId | null) => {
     if (!id || id === "gemini-nano" || id === "local-embedding") return;
     try {
       const selected = PRESETS.find((p) => p.id === id);
       const provider = settings.providers[id];
-      const list = await listModels({
+      const list = await listModelsDetailed({
         baseUrl: provider?.baseUrl || selected?.baseUrl || "",
         apiKey: provider?.apiKey ?? "",
         model: "",
         authHeader: selected?.authHeader ?? "bearer",
         extraHeaders: selected?.extraHeaders,
       });
-      setModels(list);
+      setModels(list.map((m) => m.id));
+      setFetchedPrices(new Map(list.filter((m) => m.price).map((m) => [m.id, m.price as string])));
     } catch {
       // 標準リストのみ
     }
   };
 
-  // チャット応答テスト: 小リクエストを投げてレイテンシ計測(30秒でタイムアウト検知)
+  // チャット応答テスト: 小リクエストを投げてレイテンシ計測(30秒でタイムアウト検知)。
+  // 実際に送った入力とモデルの出力をそのまま表示する。
+  const [probeIo, setProbeIo] = useState<{ input: string; output: string } | null>(null);
   const probeResponse = async () => {
     setTesting(true);
+    setProbeIo(null);
     setTestResult("応答テスト中(最大30秒)...");
     try {
       const result = await probeChat(endpoint, 30_000);
       setTestResult(result.ok ? `✅ ${result.message}` : `❌ ${result.message}`);
+      setProbeIo({ input: result.input, output: result.output || "(応答なし)" });
     } finally {
       setTesting(false);
     }
@@ -253,20 +261,21 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
               <label>
                 モデル{" "}
                 <span className="note" style={{ fontWeight: 400 }}>
-                  (候補から選択 or 直接入力。取得済み {models.length} 件 + 標準 {knownModels.length} 件)
+                  (候補から選択 or 直接入力。取得済み {models.length} 件 + 標準 {knownModels.length} 件。 価格は USD /
+                  100万トークン、入力 / 出力の参考値)
                 </span>
               </label>
               {modelChoices.length > 0 && (
                 <div className="row" style={{ marginBottom: 4 }}>
-                  {modelChoices.slice(0, 8).map((m) => (
+                  {modelChoices.slice(0, 9).map((m) => (
                     <button
                       type="button"
                       key={m}
-                      className={selection.model === m ? "primary" : ""}
-                      style={{ padding: "4px 10px", fontSize: "0.85rem" }}
+                      className={`model-chip ${selection.model === m ? "primary" : ""}`}
                       onClick={() => setSlot({ model: m })}
                     >
                       {m}
+                      {priceOf(m) && <span className="model-price">{priceOf(m)}</span>}
                     </button>
                   ))}
                 </div>
@@ -279,9 +288,14 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
               />
               <datalist id={`model-choices-${slot}`}>
                 {modelChoices.map((m) => (
-                  <option key={m} value={m} />
+                  <option key={m} value={m} label={priceOf(m)} />
                 ))}
               </datalist>
+              {selection.model && priceOf(selection.model) && (
+                <p className="note" style={{ margin: "4px 0 0" }}>
+                  選択中: {selection.model} — {priceOf(selection.model)} (USD/100万トークン)
+                </p>
+              )}
               {slot === "chat" && selection.provider !== "gemini-nano" && (
                 <>
                   <label>reasoning effort(対応モデルのみ。非対応なら自動で外して再試行します)</label>
@@ -317,6 +331,16 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
             </>
           )}
           {testResult && <p className="note">{testResult}</p>}
+          {probeIo && (
+            <div className="probe-io">
+              <div>
+                <b>入力:</b> <span>{probeIo.input}</span>
+              </div>
+              <div>
+                <b>出力:</b> <span style={{ whiteSpace: "pre-wrap" }}>{probeIo.output}</span>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -368,7 +392,12 @@ function HealthCheckCard() {
       }
       push({ label: "チャット応答(実リクエスト)", status: "running", detail: "最大30秒..." });
       const probe = await probeChat(chat, 30_000);
-      update(probe.ok ? "ok" : "ng", probe.message);
+      update(
+        probe.ok ? "ok" : "ng",
+        probe.ok
+          ? `${probe.message} / 入力:「${probe.input}」→ 出力:「${probe.output.slice(0, 80)}${probe.output.length > 80 ? "…" : ""}」`
+          : probe.message,
+      );
     }
 
     // 3. 埋め込み疎通(1件埋め込んで次元数を確認)

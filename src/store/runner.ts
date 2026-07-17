@@ -120,9 +120,17 @@ export const useRunner = create<RunnerStore>((set, get) => ({
         },
       });
 
-      // レポート保存
+      // レポート保存(累積トークン実績とモデルも記録し、一覧でコスト表示できるようにする)
       const reportId = project.reportId ?? crypto.randomUUID();
-      await db.reports.put({ id: reportId, title: project.title, createdAt: Date.now(), result });
+      const latestProject = await db.projects.get(project.id);
+      await db.reports.put({
+        id: reportId,
+        title: project.title,
+        createdAt: Date.now(),
+        result,
+        tokenUsage: latestProject?.tokenUsage ?? get().usage,
+        chatModel: project.settingsSnapshot.chat.model,
+      });
       await db.projects.update(project.id, { status: "done", reportId, currentStep: null });
       set({ runningProjectId: null, currentStep: null });
     } catch (e) {

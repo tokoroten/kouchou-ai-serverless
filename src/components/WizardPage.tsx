@@ -190,7 +190,12 @@ export function WizardPage() {
             <>
               <p>
                 {fileName}: 全 {preview.totalRows.toLocaleString()} 行 / 有効コメント {comments.length.toLocaleString()}{" "}
-                件
+                件 — 推定コスト:{" "}
+                <b>
+                  チャット 約 {((estimate.chatInputTokens + estimate.chatOutputTokens) / 1000).toFixed(0)}k + 埋め込み
+                  約 {(estimate.embeddingTokens / 1000).toFixed(0)}k トークン(参考 約 $
+                  {estimateUsd(estimate).toFixed(3)})
+                </b>
               </p>
               <label>意見本文の列</label>
               <select value={bodyColumn} onChange={(e) => setBodyColumn(e.target.value)}>
@@ -343,7 +348,7 @@ export function WizardPage() {
             </p>
           ) : (
             <p>
-              参考費用(gpt-4o-mini + text-embedding-3-small 価格): <b>約 ${estimateUsd(estimate).toFixed(3)}</b>
+              参考費用(gpt-5.4-nano + text-embedding-3-small 価格): <b>約 ${estimateUsd(estimate).toFixed(3)}</b>
             </p>
           )}
           <p className="note">

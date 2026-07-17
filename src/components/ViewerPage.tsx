@@ -3,6 +3,7 @@ import { useState } from "react";
 import { exportArgumentsCsv, exportClustersCsv, exportResultJson, exportSingleHtml } from "../lib/export";
 import { navigate } from "../lib/router";
 import { db } from "../lib/storage/db";
+import { estimateActualCostUsd } from "../types/settings";
 import { ReportViewer } from "./viewer/ReportViewer";
 
 // レポート表示ページ。ビューア + エクスポート(JSON / 単一HTML / CSV)。
@@ -26,9 +27,19 @@ export function ViewerPage({ reportId }: { reportId: string }) {
     }
   };
 
+  const cost =
+    report.tokenUsage && report.chatModel ? estimateActualCostUsd(report.tokenUsage, report.chatModel) : null;
+
   return (
     <div>
       <div className="row" style={{ justifyContent: "flex-end" }}>
+        {report.tokenUsage && (
+          <span className="note">
+            生成コスト: 入力 {report.tokenUsage.input.toLocaleString()} / 出力{" "}
+            {report.tokenUsage.output.toLocaleString()} トークン
+            {cost !== null ? ` ≈ $${cost.toFixed(3)}` : ""}({report.chatModel})
+          </span>
+        )}
         <button type="button" onClick={() => exportResultJson(report.result)}>
           JSON エクスポート
         </button>

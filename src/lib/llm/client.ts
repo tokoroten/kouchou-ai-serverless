@@ -308,29 +308,47 @@ export type ModelInfo = {
   id: string;
   /** OpenRouter の pricing 情報から判定した無償フラグ(情報がなければ undefined) */
   isFree?: boolean;
+  /** USD / 100万トークン(入力/出力)。pricing 情報があるプロバイダのみ */
+  price?: string;
 };
 
-/** モデル一覧を料金情報付きで取得する(OpenRouter の無償モデル検索用) */
+/** モデル一覧を料金情報付きで取得する(OpenRouter の無償モデル検索・価格表示用) */
 export async function listModelsDetailed(endpoint: EndpointConfig, signal?: AbortSignal): Promise<ModelInfo[]> {
   const url = `${endpoint.baseUrl.replace(/\/$/, "")}/models`;
   const res = await fetchWithRetry(url, { method: "GET", headers: buildHeaders(endpoint) }, signal);
   const data = (await res.json()) as {
     data?: Array<{ id: string; pricing?: { prompt?: string | number; completion?: string | number } }>;
   };
+  const perMillion = (v: string | number | undefined) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    const m = n * 1_000_000;
+    return m >= 10 ? m.toFixed(0) : m >= 0.1 ? m.toFixed(2) : m.toFixed(3);
+  };
   return (data.data ?? []).map((m) => {
     let isFree: boolean | undefined;
+    let price: string | undefined;
     if (m.pricing) {
       isFree = Number(m.pricing.prompt ?? 1) === 0 && Number(m.pricing.completion ?? 1) === 0;
+      const input = perMillion(m.pricing.prompt);
+      const output = perMillion(m.pricing.completion);
+      if (input !== null && output !== null) price = `$${input} / $${output}`;
     }
-    return { id: m.id, isFree };
+    return { id: m.id, isFree, price };
   });
 }
 
 export type ChatProbeResult = {
   ok: boolean;
   latencyMs: number;
+  /** テストで送信した入力プロンプト */
+  input: string;
+  /** モデルの応答本文(失敗時は空) */
+  output: string;
   message: string;
 };
+
+export const PROBE_PROMPT = "接続テストです。「OK」とだけ返答してください。";
 
 /**
  * チャット応答テスト: 小さなリクエストを投げ、応答時間を計測する。
@@ -340,19 +358,23 @@ export async function probeChat(endpoint: EndpointConfig, timeoutMs = 30_000): P
   const start = Date.now();
   try {
     const content = await requestChat(endpoint, {
-      messages: [{ role: "user", content: "「OK」とだけ返答してください。" }],
+      messages: [{ role: "user", content: PROBE_PROMPT }],
       timeoutMs,
     });
     const latencyMs = Date.now() - start;
     return {
       ok: true,
       latencyMs,
-      message: `応答 ${Math.round(latencyMs / 100) / 10} 秒: ${content.slice(0, 40)}`,
+      input: PROBE_PROMPT,
+      output: content,
+      message: `応答 ${Math.round(latencyMs / 100) / 10} 秒`,
     };
   } catch (e) {
     return {
       ok: false,
       latencyMs: Date.now() - start,
+      input: PROBE_PROMPT,
+      output: "",
       message: e instanceof Error ? e.message : String(e),
     };
   }

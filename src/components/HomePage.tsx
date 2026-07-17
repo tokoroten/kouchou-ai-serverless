@@ -6,7 +6,7 @@ import { dexieStepStore } from "../lib/storage/checkpoints";
 import { db, deleteProjectData, requestPersistentStorage } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
-import { resolveEndpoint } from "../types/settings";
+import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
 
 // ホーム / レポート一覧(DESIGN §7-1)。
 
@@ -176,6 +176,12 @@ export function HomePage() {
             <h3>{report.title}</h3>
             <p className="note">
               {new Date(report.createdAt).toLocaleString("ja-JP")} / 意見 {report.result.arguments.length} 件
+              {report.tokenUsage &&
+                report.chatModel &&
+                (() => {
+                  const cost = estimateActualCostUsd(report.tokenUsage, report.chatModel);
+                  return cost !== null ? ` / コスト ≈ $${cost.toFixed(3)}` : "";
+                })()}
             </p>
             <div className="row">
               <button type="button" className="primary" onClick={() => navigate(`/report/${report.id}`)}>

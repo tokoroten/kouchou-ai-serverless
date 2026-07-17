@@ -43,8 +43,34 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const [assignments, setAssignments] = useState<Int32Array[] | null>(null);
   const [labelsPreview, setLabelsPreview] = useState<{ id: string; label: string; value: number }[] | null>(null);
   const [labelling, setLabelling] = useState(false);
+  // UMAP 詳細パラメータ(変更後は「UMAP 再実行」で反映)
+  const [umapParams, setUmapParams] = useState({
+    nNeighbors: 15,
+    minDist: 0.1,
+    spread: 1.0,
+    nEpochs: 0, // 0 = 自動
+    seed: "kouchou-ai",
+  });
+  // 現在表示中の座標がどのパラメータで計算されたか(変更検知用)
+  const [appliedParams, setAppliedParams] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // このページで消費したトークン(ラベリング・前処理)。レポート保存時に記録する
+  const usageRef = useRef({ input: 0, output: 0, total: 0 });
+
+  const toUmapInput = useCallback(
+    () => ({
+      seed: umapParams.seed || "kouchou-ai",
+      umap: {
+        ...(umapParams.nNeighbors !== 15 ? { nNeighbors: umapParams.nNeighbors } : {}),
+        ...(umapParams.minDist !== 0.1 ? { minDist: umapParams.minDist } : {}),
+        ...(umapParams.spread !== 1.0 ? { spread: umapParams.spread } : {}),
+        ...(umapParams.nEpochs > 0 ? { nEpochs: umapParams.nEpochs } : {}),
+      },
+    }),
+    [umapParams],
+  );
+  const paramsDirty = appliedParams !== null && appliedParams !== JSON.stringify(toUmapInput());
 
   useEffect(() => {
     return () => {
@@ -57,17 +83,19 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   useEffect(() => {
     const emb = preprocessed?.emb;
     if (!emb || coords) return;
-    const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, seed: "kouchou-ai" });
+    const input = toUmapInput();
+    const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, ...input });
     dexieCheckpoints(projectId)
       .getChunk("umap", key)
       .then((saved: { x: Float32Array; y: Float32Array } | undefined) => {
         if (saved) {
           setCoords(saved);
           setUmapDone(true);
+          setAppliedParams(JSON.stringify(input));
           setStatus("保存済みの UMAP 座標を復元しました");
         }
       });
-  }, [preprocessed?.emb, coords, projectId]);
+  }, [preprocessed?.emb, coords, projectId, toUmapInput]);
 
   const buildCtx = useCallback(
     (persistent: boolean): PipelineContext | null => {
@@ -81,6 +109,13 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         checkpoints: persistent ? dexieCheckpoints(projectId) : memoryCheckpoints(),
         onProgress: (event) => {
           if (event.total > 0) setStatus(`${event.step}: ${event.done}/${event.total}`);
+        },
+        onUsage: (u) => {
+          usageRef.current = {
+            input: usageRef.current.input + u.input,
+            output: usageRef.current.output + u.output,
+            total: usageRef.current.total + u.total,
+          };
         },
       };
     },
@@ -108,6 +143,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const runUmap = () => {
     const emb = preprocessed?.emb;
     if (!emb) return;
+    const input = toUmapInput();
     setError(null);
     setUmapRunning(true);
     setUmapDone(false);
@@ -126,9 +162,10 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         setCoords({ x: message.x, y: message.y });
         setUmapRunning(false);
         setUmapDone(true);
+        setAppliedParams(JSON.stringify(input));
         setStatus("UMAP 完了 — スライダーでクラスタ数を調整できます");
-        // UMAP 座標を逐次保存(タブが閉じられても失われない)
-        const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, seed: "kouchou-ai" });
+        // UMAP 座標を逐次保存(タブが閉じられても失われない)。キーはパラメータ込み
+        const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, ...input });
         void dexieCheckpoints(projectId).putChunk("umap", key, { x: message.x, y: message.y });
         worker.terminate();
       } else if (message.type === "error") {
@@ -146,7 +183,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         dim: emb.dim,
         count,
         clusterNums: [...new Set([clamp(Math.min(lv1, lv2)), clamp(Math.max(lv1, lv2))])],
-        seed: "kouchou-ai",
+        ...input,
       },
     });
   };
@@ -218,6 +255,8 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         title: `${project.title} (${nums.join("-")})`,
         createdAt: Date.now(),
         result,
+        tokenUsage: { ...usageRef.current },
+        chatModel: ctx.chat.model,
       });
       const store = dexieStepStore(projectId);
       await store.put("clustering", clusteringResult);
@@ -290,8 +329,19 @@ export function InteractivePage({ projectId }: { projectId: string }) {
       {hasPreprocess && (
         <>
           <div className="row card">
-            <button type="button" className="primary" onClick={runUmap} disabled={umapRunning}>
-              {umapRunning ? "UMAP 実行中..." : coords ? "UMAP 再実行" : "UMAP 実行"}
+            <button
+              type="button"
+              className={paramsDirty ? "primary umap-dirty" : "primary"}
+              onClick={runUmap}
+              disabled={umapRunning}
+            >
+              {umapRunning
+                ? "UMAP 実行中..."
+                : paramsDirty
+                  ? "UMAP 再実行(パラメータ変更あり)"
+                  : coords
+                    ? "UMAP 再実行"
+                    : "UMAP 実行"}
             </button>
             <button
               type="button"
@@ -344,6 +394,81 @@ export function InteractivePage({ projectId }: { projectId: string }) {
             </button>
             <span className="note">{status}</span>
           </div>
+          <details className="card" style={{ marginTop: 0 }}>
+            <summary style={{ cursor: "pointer" }}>
+              UMAP 詳細パラメータ{paramsDirty ? "(変更あり — 再実行で反映)" : ""}
+            </summary>
+            <div className="row" style={{ marginTop: 8 }}>
+              <label style={{ margin: 0, fontWeight: 400 }}>
+                nNeighbors: {umapParams.nNeighbors}
+                <br />
+                <input
+                  type="range"
+                  min={2}
+                  max={100}
+                  value={umapParams.nNeighbors}
+                  onChange={(e) => setUmapParams((p) => ({ ...p, nNeighbors: Number(e.target.value) }))}
+                  style={{ width: 160 }}
+                />
+                <span className="note"> 局所⇔大域</span>
+              </label>
+              <label style={{ margin: 0, fontWeight: 400 }}>
+                minDist: {umapParams.minDist.toFixed(2)}
+                <br />
+                <input
+                  type="range"
+                  min={0}
+                  max={0.99}
+                  step={0.01}
+                  value={umapParams.minDist}
+                  onChange={(e) => setUmapParams((p) => ({ ...p, minDist: Number(e.target.value) }))}
+                  style={{ width: 160 }}
+                />
+                <span className="note"> 密集⇔分散</span>
+              </label>
+              <label style={{ margin: 0, fontWeight: 400 }}>
+                spread: {umapParams.spread.toFixed(1)}
+                <br />
+                <input
+                  type="range"
+                  min={0.5}
+                  max={3}
+                  step={0.1}
+                  value={umapParams.spread}
+                  onChange={(e) => setUmapParams((p) => ({ ...p, spread: Number(e.target.value) }))}
+                  style={{ width: 160 }}
+                />
+                <span className="note"> 全体スケール</span>
+              </label>
+              <label style={{ margin: 0, fontWeight: 400 }}>
+                epochs: {umapParams.nEpochs === 0 ? "自動" : umapParams.nEpochs}
+                <br />
+                <input
+                  type="range"
+                  min={0}
+                  max={1000}
+                  step={50}
+                  value={umapParams.nEpochs}
+                  onChange={(e) => setUmapParams((p) => ({ ...p, nEpochs: Number(e.target.value) }))}
+                  style={{ width: 160 }}
+                />
+                <span className="note"> 反復回数(0=自動)</span>
+              </label>
+              <label style={{ margin: 0, fontWeight: 400 }}>
+                シード
+                <br />
+                <input
+                  value={umapParams.seed}
+                  onChange={(e) => setUmapParams((p) => ({ ...p, seed: e.target.value }))}
+                  style={{ width: 140 }}
+                />
+              </label>
+            </div>
+            <p className="note">
+              パラメータ変更後は「UMAP 再実行」で反映されます(座標はパラメータごとにキャッシュされます)。
+              クラスタ数のスライダーは再実行不要で即時反映です。
+            </p>
+          </details>
           <div className="viewer-chart" style={{ height: 520 }}>
             {coords ? (
               <Plot data={plotData} layout={plotLayout} config={{ scrollZoom: true }} />

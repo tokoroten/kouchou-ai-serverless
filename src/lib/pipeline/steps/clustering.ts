@@ -70,8 +70,9 @@ type CoreOutput = {
   assignments: Int32Array[];
 };
 
-export function umapCheckpointKey(input: Pick<ClusteringInput, "count" | "dim" | "seed">): string {
-  return `${input.count}/${input.dim}/${input.seed ?? "kouchou-ai"}`;
+export function umapCheckpointKey(input: Pick<ClusteringInput, "count" | "dim" | "seed" | "umap">): string {
+  const params = input.umap && Object.keys(input.umap).length > 0 ? `/${JSON.stringify(input.umap)}` : "";
+  return `${input.count}/${input.dim}/${input.seed ?? "kouchou-ai"}${params}`;
 }
 
 function runInWorker(

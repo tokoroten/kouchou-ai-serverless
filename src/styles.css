@@ -258,6 +258,33 @@ table.preview-table {
   margin: 6px 0;
 }
 
+/* 応答テストの入出力表示 */
+.probe-io {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+.probe-io > div {
+  margin: 2px 0;
+}
+
+/* モデル候補チップ */
+.model-chip {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.3;
+}
+.model-chip .model-price {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
 /* プロバイダ設定(折りたたみ行) */
 .provider-row {
   border-top: 1px solid var(--border);

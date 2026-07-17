@@ -52,8 +52,8 @@ export function estimateCost(
   };
 }
 
-/** 参考価格(USD / 1M tokens)。既定は gpt-4o-mini / text-embedding-3-small */
-export function estimateUsd(estimate: CostEstimate, pricePerM = { input: 0.15, output: 0.6, embedding: 0.02 }): number {
+/** 参考価格(USD / 1M tokens)。既定は gpt-5.4-nano / text-embedding-3-small */
+export function estimateUsd(estimate: CostEstimate, pricePerM = { input: 0.2, output: 1.25, embedding: 0.02 }): number {
   return (
     (estimate.chatInputTokens / 1e6) * pricePerM.input +
     (estimate.chatOutputTokens / 1e6) * pricePerM.output +

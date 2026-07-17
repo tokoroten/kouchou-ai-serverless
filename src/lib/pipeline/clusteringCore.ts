@@ -8,12 +8,28 @@ import { UMAP } from "umap-js";
 // UMAP は step() で1反復ずつ進め、数反復ごとに中間座標をコールバックで流せる
 // (進捗表示とフェーズ2のインタラクティブモードの土台。DESIGN §6.3)。
 
+export type UmapParams = {
+  /** 既定: min(15, N-1)。局所構造(小)⇔大域構造(大) */
+  nNeighbors?: number;
+  /** 既定: 0.1。点の詰まり具合(小=密集、大=分散) */
+  minDist?: number;
+  /** 既定: 1.0。埋め込み全体のスケール */
+  spread?: number;
+  /** 既定: 0(自動)。UMAP の反復回数 */
+  nEpochs?: number;
+  /** 既定: 5。負例サンプリング率 */
+  negativeSampleRate?: number;
+  /** 既定: 1.0。反発の強さ */
+  repulsionStrength?: number;
+};
+
 export type ClusteringInput = {
   vectors: Float32Array; // count × dim のフラット配列
   dim: number;
   count: number;
   clusterNums: number[]; // 昇順でなくてもよい(内部でソート)
   seed?: string;
+  umap?: UmapParams;
 };
 
 export type ClusteringOutput = {
@@ -49,11 +65,18 @@ export function runClusteringCore(input: ClusteringInput, callbacks: ClusteringC
   // ---- UMAP (本家: n_components=2, n_neighbors=min(15, N-1), 最低2) ----
   callbacks.onPhase?.("umap");
   const rng = seedrandom(input.seed ?? "kouchou-ai");
-  const nNeighbors = count <= 15 ? Math.max(2, count - 1) : 15;
+  const params = input.umap ?? {};
+  const requestedNeighbors = params.nNeighbors ?? 15;
+  const nNeighbors = Math.max(2, Math.min(requestedNeighbors, count - 1));
   const umap = new UMAP({
     nComponents: 2,
     nNeighbors,
     random: () => rng(),
+    ...(params.minDist !== undefined ? { minDist: params.minDist } : {}),
+    ...(params.spread !== undefined ? { spread: params.spread } : {}),
+    ...(params.nEpochs ? { nEpochs: params.nEpochs } : {}),
+    ...(params.negativeSampleRate !== undefined ? { negativeSampleRate: params.negativeSampleRate } : {}),
+    ...(params.repulsionStrength !== undefined ? { repulsionStrength: params.repulsionStrength } : {}),
   });
   const totalEpochs = umap.initializeFit(data);
   for (let epoch = 0; epoch < totalEpochs; epoch++) {

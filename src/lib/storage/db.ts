@@ -35,6 +35,10 @@ export type ReportRow = {
   title: string;
   createdAt: number;
   result: Result;
+  /** 生成に要したトークン実績(インポートしたレポートには無い) */
+  tokenUsage?: { input: number; output: number; total: number };
+  /** 生成に使ったチャットモデル(コスト概算用) */
+  chatModel?: string;
 };
 
 export const db = new Dexie("kouchou-ai-serverless") as Dexie & {

@@ -56,6 +56,29 @@ export function resolveEndpoint(settings: Settings, slot: "chat" | "embedding"):
   };
 }
 
+/** 既知モデルリストから単価(USD/100万トークン)を引く。不明なら null */
+export function lookupModelPrice(modelId: string): { input: number; output: number } | null {
+  for (const preset of PRESETS) {
+    for (const m of [...(preset.knownChatModels ?? []), ...(preset.knownEmbeddingModels ?? [])]) {
+      if (m.id === modelId && m.price) {
+        const nums = m.price.match(/\$([\d.]+)/g)?.map((s) => Number(s.slice(1)));
+        if (nums && nums.length >= 1 && nums.every((n) => Number.isFinite(n))) {
+          return { input: nums[0], output: nums[1] ?? 0 };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** 実績トークンからの概算費用(チャットモデル単価ベース。単価不明なら null)。
+ * 入力トークンにはチャットと埋め込みが混ざるため、上限寄りの概算になる。 */
+export function estimateActualCostUsd(usage: { input: number; output: number }, chatModel: string): number | null {
+  const price = lookupModelPrice(chatModel);
+  if (!price) return null;
+  return (usage.input / 1e6) * price.input + (usage.output / 1e6) * price.output;
+}
+
 /** プロバイダが「設定済み」か(選択可能にするかどうか) */
 export function isProviderConfigured(id: PresetId, settings: Settings): boolean {
   const provider = settings.providers[id];
@@ -102,21 +125,42 @@ export type Preset = {
   slot?: "chat" | "embedding";
   authHeader?: "bearer" | "api-key";
   extraHeaders?: Record<string, string>;
-  /** 標準モデルリスト(接続テスト前でも選べるようにする) */
-  knownChatModels?: string[];
-  knownEmbeddingModels?: string[];
+  /** 標準モデルリスト(接続テスト前でも選べるようにする)。安い順に並べる */
+  knownChatModels?: ModelSuggestion[];
+  knownEmbeddingModels?: ModelSuggestion[];
+};
+
+export type ModelSuggestion = {
+  id: string;
+  /** USD / 100万トークン(入力/出力)。embeddings は入力のみ。2026-01 時点の参考値 */
+  price?: string;
 };
 
 export const PRESETS: Preset[] = [
+  // 既知モデルリストは「安い順」に並べる(旧世代モデルも互換性のため残す)。
+  // 意見分割・ラベリング・要約は比較的軽いタスクなので、安価な小型モデルで十分。
   {
     id: "openai",
     label: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    chatModel: "gpt-4o-mini",
+    chatModel: "gpt-5.4-nano",
     embeddingModel: "text-embedding-3-small",
-    corsNote: "そのまま動作します。",
-    knownChatModels: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5.1", "o4-mini"],
-    knownEmbeddingModels: ["text-embedding-3-small", "text-embedding-3-large"],
+    corsNote: "そのまま動作します。意見分割・要約は nano / mini 級で十分です。",
+    knownChatModels: [
+      { id: "gpt-5-nano", price: "$0.05 / $0.40" },
+      { id: "gpt-4o-mini", price: "$0.15 / $0.60" },
+      { id: "gpt-5.4-nano", price: "$0.20 / $1.25" },
+      { id: "gpt-5-mini", price: "$0.25 / $2.00" },
+      { id: "gpt-5.4-mini", price: "$0.75 / $4.50" },
+      { id: "gpt-5.6-luna", price: "$1.00 / $6.00" },
+      { id: "gpt-5.4", price: "$2.50 / $15.00" },
+      { id: "gpt-5.6-terra", price: "$2.50 / $15.00" },
+      { id: "gpt-5.6-sol", price: "$5.00 / $30.00" },
+    ],
+    knownEmbeddingModels: [
+      { id: "text-embedding-3-small", price: "$0.02" },
+      { id: "text-embedding-3-large", price: "$0.13" },
+    ],
   },
   {
     id: "anthropic",
@@ -125,33 +169,50 @@ export const PRESETS: Preset[] = [
     chatModel: "claude-haiku-4-5",
     embeddingModel: "",
     corsNote:
-      "Anthropic の OpenAI 互換エンドポイントを使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。ブラウザ直アクセス許可ヘッダを自動送信します。",
+      "Anthropic の OpenAI 互換エンドポイントを使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。ブラウザ直アクセス許可ヘッダを自動送信します。意見分割・要約は Haiku で十分です。",
     slot: "chat",
     extraHeaders: { "anthropic-dangerous-direct-browser-access": "true", "anthropic-version": "2023-06-01" },
-    knownChatModels: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+    knownChatModels: [
+      { id: "claude-3-5-haiku-latest", price: "$0.80 / $4.00" },
+      { id: "claude-haiku-4-5", price: "$1.00 / $5.00" },
+      { id: "claude-sonnet-5", price: "$2.00 / $10.00 (〜2026-08)" },
+      { id: "claude-sonnet-4-6", price: "$3.00 / $15.00" },
+      { id: "claude-opus-4-8", price: "$5.00 / $25.00" },
+    ],
   },
   {
     id: "grok",
     label: "Grok (xAI)",
     baseUrl: "https://api.x.ai/v1",
-    chatModel: "grok-4-fast",
+    chatModel: "grok-4.3",
     embeddingModel: "",
-    corsNote: "xAI の OpenAI 互換 API を使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。",
+    corsNote:
+      "xAI の OpenAI 互換 API を使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。旧 grok-4 / grok-4.1-fast 系 ID は 2026-05 に廃止され grok-4.3 へ自動転送されます。",
     slot: "chat",
-    knownChatModels: ["grok-4-fast", "grok-4", "grok-3-mini"],
+    knownChatModels: [
+      { id: "grok-4.3", price: "$1.25 / $2.50" },
+      { id: "grok-4.20", price: "$1.25 / $2.50" },
+      { id: "grok-4.5", price: "$2.00 / $6.00" },
+    ],
   },
   {
     id: "openrouter",
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    chatModel: "openai/gpt-4o-mini",
+    chatModel: "openai/gpt-5.4-nano",
     embeddingModel: "",
-    corsNote: "chat のみ対応。embeddings はないため、埋め込みスロットは別プロバイダ(OpenAI 等)を設定してください。",
+    corsNote:
+      "chat のみ対応。embeddings はないため、埋め込みスロットは別プロバイダ(OpenAI 等)を設定してください。「無償モデルを探す」で :free モデルも使えます(価格はモデル一覧取得時に実勢値で表示されます)。",
     knownChatModels: [
-      "openai/gpt-4o-mini",
-      "anthropic/claude-haiku-4.5",
-      "google/gemini-2.5-flash",
-      "deepseek/deepseek-chat-v3.1",
+      { id: "openai/gpt-oss-20b", price: "$0.03 / $0.13" },
+      { id: "google/gemini-2.5-flash-lite", price: "$0.10 / $0.40" },
+      { id: "meta-llama/llama-4-maverick", price: "$0.20 / $0.80" },
+      { id: "openai/gpt-5.4-nano", price: "$0.20 / $1.25" },
+      { id: "deepseek/deepseek-chat-v3.1", price: "$0.25 / $0.95" },
+      { id: "google/gemini-3.1-flash-lite", price: "$0.25 / $1.50" },
+      { id: "moonshotai/kimi-k2", price: "$0.57 / $2.30" },
+      { id: "anthropic/claude-haiku-4.5", price: "$1.00 / $5.00" },
+      { id: "x-ai/grok-4.3", price: "$1.25 / $2.50" },
     ],
   },
   {

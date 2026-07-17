@@ -4,6 +4,7 @@ import { navigate } from "../lib/router";
 import { db } from "../lib/storage/db";
 import { useRunner } from "../store/runner";
 import { PIPELINE_STEPS, type PipelineStepName } from "../types/project";
+import { estimateActualCostUsd as actualCostUsd } from "../types/settings";
 import { Plot } from "./viewer/Plot";
 
 // 実行進捗画面(DESIGN §7-4)。
@@ -115,12 +116,32 @@ export function RunPage({ projectId }: { projectId: string }) {
             累計トークン: 入力 {(isRunning ? runner.usage : project.tokenUsage).input.toLocaleString()} / 出力{" "}
             {(isRunning ? runner.usage : project.tokenUsage).output.toLocaleString()}
           </span>
+          {(() => {
+            const usage = isRunning ? runner.usage : project.tokenUsage;
+            const cost = actualCostUsd(usage, project.settingsSnapshot.chat.model);
+            return cost !== null && usage.total > 0 ? (
+              <span>
+                概算費用: <b>${cost.toFixed(3)}</b>
+                <span className="note">({project.settingsSnapshot.chat.model} 単価)</span>
+              </span>
+            ) : null;
+          })()}
           {elapsed !== null && (
             <span>
               経過時間: {Math.floor(elapsed / 60)}分{elapsed % 60}秒
             </span>
           )}
         </div>
+        {project.status === "done" && project.tokenUsage.total > 0 && (
+          <p className="note" style={{ marginBottom: 0 }}>
+            ✅ レポート作成完了 — 実績 入力 {project.tokenUsage.input.toLocaleString()} / 出力{" "}
+            {project.tokenUsage.output.toLocaleString()} トークン
+            {(() => {
+              const cost = actualCostUsd(project.tokenUsage, project.settingsSnapshot.chat.model);
+              return cost !== null ? ` ≈ $${cost.toFixed(3)}` : "";
+            })()}
+          </p>
+        )}
       </div>
 
       <div className="row">
