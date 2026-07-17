@@ -20,6 +20,8 @@ export type ChatOptions = {
   timeoutMs?: number;
   /** 応答の message オブジェクトを生のまま受け取る(応答テストで reasoning 等を表示するため) */
   onRawMessage?: (message: Record<string, unknown>) => void;
+  /** 応答全体を生のまま受け取る(usage 詳細等の診断用) */
+  onRawResponse?: (data: Record<string, unknown>) => void;
 };
 
 export const DEFAULT_CHAT_TIMEOUT_MS = 300_000;
@@ -263,6 +265,7 @@ async function executeChat(
   );
   const data = (await res.json()) as Record<string, unknown>;
   options.onUsage?.(extractUsage(data));
+  options.onRawResponse?.(data);
   const choices = data.choices as Array<{ message?: { content?: string } }> | undefined;
   const message = choices?.[0]?.message;
   if (message) options.onRawMessage?.(message as Record<string, unknown>);
@@ -423,11 +426,15 @@ export async function probeChat(endpoint: EndpointConfig, timeoutMs = 30_000): P
   const start = Date.now();
   try {
     let raw: Record<string, unknown> | null = null;
+    let rawResponse: Record<string, unknown> | null = null;
     const content = await requestChat(endpoint, {
       messages: [{ role: "user", content: PROBE_PROMPT }],
       timeoutMs,
       onRawMessage: (message) => {
         raw = message;
+      },
+      onRawResponse: (data) => {
+        rawResponse = data;
       },
     });
     const latencyMs = Date.now() - start;
@@ -452,6 +459,23 @@ export async function probeChat(endpoint: EndpointConfig, timeoutMs = 30_000): P
       }
     }
 
+    // OpenAI: Chat Completions は思考本文を返さない(トークン数のみ)。
+    // 思考トークンが消費されていれば Responses API で思考要約の取得を試みる。
+    if (!reasoning) {
+      const usageDetails = (rawResponse as Record<string, unknown> | null)?.usage as
+        | { completion_tokens_details?: { reasoning_tokens?: number } }
+        | undefined;
+      const reasoningTokens = usageDetails?.completion_tokens_details?.reasoning_tokens ?? 0;
+      if (reasoningTokens > 0) {
+        const summary = endpoint.baseUrl.includes("api.openai.com")
+          ? await fetchOpenAiReasoningSummary(endpoint).catch(() => null)
+          : null;
+        reasoning = summary
+          ? `${summary}\n(Responses API による思考要約)`
+          : `(思考トークンを ${reasoningTokens.toLocaleString()} 消費しましたが、この API は思考の本文を返しません。OpenAI は Responses API 経由の要約のみで、短い思考では要約も生成されません)`;
+      }
+    }
+
     return {
       ok: true,
       latencyMs,
@@ -469,6 +493,34 @@ export async function probeChat(endpoint: EndpointConfig, timeoutMs = 30_000): P
       message: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+/**
+ * OpenAI Responses API で思考要約を取得する(応答テスト専用)。
+ * 要約が生成されなかった場合は null。
+ */
+async function fetchOpenAiReasoningSummary(endpoint: EndpointConfig): Promise<string | null> {
+  const url = `${endpoint.baseUrl.replace(/\/$/, "")}/responses`;
+  const body = {
+    model: endpoint.model,
+    input: PROBE_PROMPT,
+    reasoning: { effort: endpoint.reasoningEffort || "medium", summary: "auto" },
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: buildHeaders(endpoint),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    output?: Array<{ type: string; summary?: Array<{ type: string; text?: string }> }>;
+  };
+  const reasoningItem = data.output?.find((o) => o.type === "reasoning");
+  const text = (reasoningItem?.summary ?? [])
+    .map((s) => s.text ?? "")
+    .filter(Boolean)
+    .join("\n");
+  return text.trim() || null;
 }
 
 /** 並列実行のためのセマフォ */

@@ -175,13 +175,19 @@ export function HomePage() {
           <div key={report.id} className="card">
             <h3>{report.title}</h3>
             <p className="note">
-              {new Date(report.createdAt).toLocaleString("ja-JP")} / 意見 {report.result.arguments.length} 件
-              {report.tokenUsage &&
-                report.chatModel &&
-                (() => {
-                  const cost = estimateActualCostUsd(report.tokenUsage, report.chatModel, report.serviceTier);
-                  return cost !== null ? ` / コスト ≈ $${cost.toFixed(3)}` : "";
-                })()}
+              {new Date(report.createdAt).toLocaleString("ja-JP")} / 意見 {report.result.arguments.length} 件{(() => {
+                // 旧レポート(実績未記録)は生成元プロジェクトの記録から遡って表示する
+                const sourceProject = projects?.find((p) => p.reportId === report.id);
+                const usage = report.tokenUsage ?? sourceProject?.tokenUsage;
+                const model = report.chatModel ?? sourceProject?.settingsSnapshot.chat.model;
+                const tier = report.serviceTier ?? sourceProject?.settingsSnapshot.chat.serviceTier;
+                if (!usage || usage.total === 0) return "";
+                const cost = model ? estimateActualCostUsd(usage, model, tier) : null;
+                // 単価不明のモデル(ローカル等)でもトークン数は必ず出す
+                return cost !== null
+                  ? ` / コスト ≈ $${cost.toFixed(3)}`
+                  : ` / トークン 入力${Math.round(usage.input / 1000)}k+出力${Math.round(usage.output / 1000)}k`;
+              })()}
             </p>
             <div className="row">
               <button type="button" className="primary" onClick={() => navigate(`/report/${report.id}`)}>
