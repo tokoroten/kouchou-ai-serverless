@@ -18,6 +18,7 @@ import { useSettings } from "../store/settings";
 import type { EmbeddingResult, ExtractionResult } from "../types/project";
 import { resolveEndpoint } from "../types/settings";
 import { Plot } from "./viewer/Plot";
+import { convexHull } from "./viewer/ScatterChart";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 
 // フェーズ2: インタラクティブ再クラスタリング(次世代版)。
@@ -55,6 +56,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const [view, setView] = useState<ClusterView>(DEFAULT_VIEW);
   const [assignment, setAssignment] = useState<TrackedAssignment | null>(null);
   const [colorMode, setColorMode] = useState<"cluster" | "attribute">("cluster");
+  // 凸包は既定オフ(通常版ビューアと同じ)。グラフクラスタは全体ビューでは空間的に
+  // 重なりやすく、「見た目で切り直す」後やドリルダウン時に有用
+  const [showHull, setShowHull] = useState(false);
   // トピック絞り込み(ドリルダウン)。indices はグローバルインデックス。
   // 混在したままの全体 UMAP ではなく、トピックを選んでから全キャンバスで軸分離する
   const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
@@ -465,7 +469,34 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       if (attributeColors) return attributeColors[i];
       return (label && colorByCluster.get(label)) || "#bbbbbb";
     });
+    // biome-ignore lint/suspicious/noExplicitAny: Plotly trace
+    const traces: any[] = [];
+    // 凸包(SVG scatter は WebGL の背面に描画される。通常版ビューアと同じ方式)
+    if (showHull) {
+      for (const summary of clusterSummaries) {
+        if (view.selectedClusterId && summary.clusterId !== view.selectedClusterId) continue;
+        const points = summary.members.map((i) => [coords.x[i], coords.y[i]] as [number, number]);
+        const hull = convexHull(points);
+        if (hull.length < 3) continue;
+        const color = colorByCluster.get(summary.clusterId) ?? "#888";
+        traces.push({
+          x: [...hull.map((p) => p[0]), hull[0][0]],
+          y: [...hull.map((p) => p[1]), hull[0][1]],
+          mode: "lines",
+          fill: "toself",
+          fillcolor: `${color}22`,
+          line: { color, width: 1.5 },
+          type: "scatter",
+          hoveron: "fills",
+          hoverinfo: "text",
+          text: summary.label,
+          hoverlabel: { bgcolor: color, bordercolor: color, font: { color: "white", size: 13 } },
+          showlegend: false,
+        });
+      }
+    }
     return [
+      ...traces,
       {
         x: Array.from(coords.x),
         y: Array.from(coords.y),
@@ -487,7 +518,16 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         showlegend: false,
       },
     ];
-  }, [activeRecords, coords, assignment, colorByCluster, attributeColors, view.selectedClusterId]);
+  }, [
+    activeRecords,
+    coords,
+    assignment,
+    colorByCluster,
+    attributeColors,
+    view.selectedClusterId,
+    showHull,
+    clusterSummaries,
+  ]);
 
   const annotations = useMemo(() => {
     if (!coords) return [];
@@ -769,6 +809,15 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   onChange={(e) => updateView({ stanceAxisEnabled: e.target.checked })}
                 />
                 X軸=賛否
+              </label>
+              <label style={{ fontWeight: 400, margin: 0 }} title="クラスタごとの凸包(なわばり)を半透明で表示します">
+                <input
+                  type="checkbox"
+                  style={{ width: "auto", marginRight: 4 }}
+                  checked={showHull}
+                  onChange={(e) => setShowHull(e.target.checked)}
+                />
+                凸包
               </label>
               {attributeInfos.length > 0 && (
                 <label

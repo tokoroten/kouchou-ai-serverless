@@ -159,7 +159,7 @@ export function ScatterChart({
 }
 
 /** 凸包計算(本家 ScatterChart.tsx の Gift wrapping アルゴリズムの移植) */
-function convexHull(points: [number, number][]): [number, number][] {
+export function convexHull(points: [number, number][]): [number, number][] {
   if (points.length < 3) return points;
 
   let start = 0;
