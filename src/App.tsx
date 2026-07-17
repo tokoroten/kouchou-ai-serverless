@@ -1,5 +1,6 @@
 import { HomePage } from "./components/HomePage";
 import { InteractivePage } from "./components/InteractivePage";
+import { Phase2AboutPage } from "./components/Phase2AboutPage";
 import { Phase2Home, Phase2Page } from "./components/Phase2Page";
 import { RunPage } from "./components/RunPage";
 import { SettingsPage } from "./components/SettingsPage";
@@ -25,6 +26,8 @@ export function App() {
     page = <InteractivePage projectId={route.slice("/interactive/".length)} />;
   } else if (route === "/phase2") {
     page = <Phase2Home />;
+  } else if (route === "/phase2/about") {
+    page = <Phase2AboutPage />;
   } else if (route.startsWith("/phase2/")) {
     page = <Phase2Page projectId={route.slice("/phase2/".length)} />;
   } else {

@@ -585,7 +585,8 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       <p className="note">
         クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」です。スライダー操作は LLM
         を呼ばず、候補グラフの再重み付けだけで点群が連続的に再編されます。スタンス/理由の重みは、
-        クラスタを選択したときにそのクラスタ内だけに適用されます(focus+context)。
+        クラスタを選択したときにそのクラスタ内だけに適用されます(focus+context)。 詳しい仕組みは{" "}
+        <a href="#/phase2/about">アルゴリズム解説</a> へ。
       </p>
       {error && <div className="error-box">{error}</div>}
 
@@ -658,16 +659,24 @@ export function Phase2Page({ projectId }: { projectId: string }) {
               )}
             </div>
             <div className="row">
+              <b
+                style={{ minWidth: 110 }}
+                title="意見同士の「近さ」をどの軸で測るか。UMAP レイアウトとクラスタリングの両方に効きます"
+              >
+                分離の重み
+              </b>
               <Slider
                 label="意味"
                 value={view.semanticWeight}
                 max={2}
+                hint="意見本文の文脈埋め込みベクトルのコサイン類似度。上げるほど「似た内容の文章」が寄ります"
                 onChange={(v) => updateView({ semanticWeight: v })}
               />
               <Slider
                 label="トピック"
                 value={view.topicWeight}
                 max={2}
+                hint="LLM が各意見に付けたトピックタグ(何について話しているか)の一致度。埋め込みではなく、全意見から集めて正規化した統制語彙(コードブック)のタグベクトルです"
                 onChange={(v) => updateView({ topicWeight: v })}
               />
               <Slider
@@ -675,6 +684,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 value={view.stanceWeight}
                 max={3}
                 disabled={view.selectedClusterId === null && scope === null}
+                hint="7段階の賛否分布の近さ。上げると賛成派と反対派が分かれます。トピックが混在すると壊れるため、クラスタ選択またはトピック絞り込み中のみ有効"
                 onChange={(v) => updateView({ stanceWeight: v })}
               />
               <Slider
@@ -682,22 +692,67 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 value={view.reasonWeight}
                 max={3}
                 disabled={view.selectedClusterId === null && scope === null}
+                hint="賛否の根拠として挙げている理由タグ(「安全性への懸念」「コスト」等)の一致度。スタンスとは独立で、賛成派と反対派が同じ理由を挙げているケースも束ねられます。クラスタ選択またはトピック絞り込み中のみ有効"
                 onChange={(v) => updateView({ reasonWeight: v })}
               />
+              {attributeInfos.length > 0 && (
+                <>
+                  <label
+                    style={{ margin: 0, fontWeight: 400 }}
+                    title="回答者の属性(年齢・職業など)による分離。数値属性は範囲正規化した距離、カテゴリカル属性は一致/不一致で近さを測ります"
+                  >
+                    属性軸:{" "}
+                    <select
+                      style={{ width: "auto" }}
+                      value={view.attributeKey ?? ""}
+                      onChange={(e) => {
+                        const key = e.target.value || null;
+                        updateView({ attributeKey: key, ...(key === null ? { attributeWeight: 0 } : {}) });
+                      }}
+                    >
+                      <option value="">(なし)</option>
+                      {attributeInfos.map((info) => (
+                        <option key={info.key} value={info.key}>
+                          {info.key} ({info.type === "numeric" ? "数値" : "カテゴリ"})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Slider
+                    label="分離強度"
+                    value={view.attributeWeight}
+                    max={3}
+                    disabled={view.attributeKey === null}
+                    hint="選択した属性の重み。数値属性(年齢等)は値が近い人同士が寄り、カテゴリカル属性は同カテゴリ同士が寄ります(カテゴリカルは断片化しやすいので色分け推奨)"
+                    onChange={(v) => updateView({ attributeWeight: v })}
+                  />
+                </>
+              )}
+            </div>
+
+            <div className="row" style={{ borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 8 }}>
+              <b style={{ minWidth: 110 }} title="近さ(重み)の定義は変えず、クラスタの切り方と見せ方だけを調整します">
+                クラスタと表示
+              </b>
               <Slider
                 label="解像度"
                 value={view.resolution}
                 min={0.4}
                 max={2.5}
+                hint="Louvain クラスタリングの resolution パラメータ。配置には影響せず、クラスタの切り方だけが変わります(上げる=細かく多く、下げる=粗く少なく)"
                 onChange={(v) => updateView({ resolution: v })}
               />
               <Slider
                 label="辺しきい値"
                 value={view.edgeThreshold}
                 max={0.8}
+                hint="この重み以下の辺(意見間のつながり)を無視します。上げるとノイズの辺が消えてクラスタが分かれやすくなり、上げすぎると孤立点が増えます"
                 onChange={(v) => updateView({ edgeThreshold: v })}
               />
-              <label style={{ fontWeight: 400, margin: 0 }}>
+              <label
+                style={{ fontWeight: 400, margin: 0 }}
+                title="レイアウトの X 軸を賛否スコアに寄せます(左=反対、右=賛成)"
+              >
                 <input
                   type="checkbox"
                   style={{ width: "auto", marginRight: 4 }}
@@ -706,44 +761,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 />
                 X軸=賛否
               </label>
-              <button type="button" onClick={saveCurrentView}>
-                ビューを保存
-              </button>
-              {savedViews.map((saved) => (
-                <button key={saved.name} type="button" onClick={() => updateView(saved)}>
-                  {saved.name}
-                </button>
-              ))}
-            </div>
-
-            {attributeInfos.length > 0 && (
-              <div className="row" style={{ borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 8 }}>
-                <label style={{ margin: 0, fontWeight: 400 }}>
-                  属性軸:{" "}
-                  <select
-                    style={{ width: "auto" }}
-                    value={view.attributeKey ?? ""}
-                    onChange={(e) => {
-                      const key = e.target.value || null;
-                      updateView({ attributeKey: key, ...(key === null ? { attributeWeight: 0 } : {}) });
-                    }}
-                  >
-                    <option value="">(なし)</option>
-                    {attributeInfos.map((info) => (
-                      <option key={info.key} value={info.key}>
-                        {info.key} ({info.type === "numeric" ? "数値" : "カテゴリ"})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Slider
-                  label="分離強度"
-                  value={view.attributeWeight}
-                  max={3}
-                  disabled={view.attributeKey === null}
-                  onChange={(v) => updateView({ attributeWeight: v })}
-                />
-                <label style={{ margin: 0, fontWeight: 400 }}>
+              {attributeInfos.length > 0 && (
+                <label
+                  style={{ margin: 0, fontWeight: 400 }}
+                  title="点の色をクラスタ別にするか、選択中の属性値別にするか"
+                >
                   色分け:{" "}
                   <select
                     style={{ width: "auto" }}
@@ -756,18 +778,30 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                     </option>
                   </select>
                 </label>
-                {selectedAttrInfo?.type === "categorical" && (
-                  <span className="note">
-                    カテゴリカル属性は色分けでの俯瞰を推奨(分離強度は一致/不一致の2値で断片化しやすい)
-                  </span>
-                )}
-              </div>
-            )}
+              )}
+              <button
+                type="button"
+                onClick={saveCurrentView}
+                title="現在の重み設定に名前を付けて保存し、ワンクリックで再現できるようにします"
+              >
+                ビューを保存
+              </button>
+              {savedViews.map((saved) => (
+                <button key={saved.name} type="button" onClick={() => updateView(saved)}>
+                  {saved.name}
+                </button>
+              ))}
+              {selectedAttrInfo?.type === "categorical" && (
+                <span className="note">
+                  カテゴリカル属性は色分けでの俯瞰を推奨(分離強度は一致/不一致の2値で断片化しやすい)
+                </span>
+              )}
+            </div>
 
             {view.selectedClusterId === null ? (
               <p className="note">
-                点をクリックするとクラスタを選択できます。スタンス/理由スライダーは選択中のクラスタ内でのみ有効です
-                (無関係なトピック同士を賛否で混ぜないため)。
+                点をクリックするとクラスタを選択できます。スタンス/理由スライダーは選択中のクラスタ内
+                またはトピック絞り込み中でのみ有効です(無関係なトピック同士を賛否で混ぜないため)。
               </p>
             ) : (
               <p className="note">
@@ -870,6 +904,7 @@ function Slider({
   min = 0,
   max = 1,
   disabled = false,
+  hint,
 }: {
   label: string;
   value: number;
@@ -877,10 +912,12 @@ function Slider({
   min?: number;
   max?: number;
   disabled?: boolean;
+  hint?: string;
 }) {
   return (
-    <label style={{ fontWeight: 400, margin: 0, opacity: disabled ? 0.4 : 1 }}>
-      {label}: {value.toFixed(2)}
+    <label style={{ fontWeight: 400, margin: 0, opacity: disabled ? 0.4 : 1 }} title={hint}>
+      {label}
+      {hint && <span style={{ cursor: "help", opacity: 0.6 }}>ⓘ</span>}: {value.toFixed(2)}
       <br />
       <input
         type="range"
@@ -904,7 +941,8 @@ export function Phase2Home() {
       <h1>次世代版 — インタラクティブ再クラスタリング</h1>
       <p className="note">
         通常版とは別の分析モードです(クラスタリング方式が異なるため、結果は通常版のレポートとは混ざりません)。
-        前処理(意見抽出+ベクトル化)済みのプロジェクトを選ぶか、事前分析済みサンプルですぐに試せます。
+        前処理(意見抽出+ベクトル化)済みのプロジェクトを選ぶか、事前分析済みサンプルですぐに試せます。 仕組みは{" "}
+        <a href="#/phase2/about">アルゴリズム解説</a> を参照。
       </p>
       <div className="card">
         <h3>サンプルで試す(分析の実行不要)</h3>
