@@ -27,8 +27,8 @@ importers:
         specifier: ^3.1.0
         version: 3.1.0
       ml-kmeans:
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: ^7.0.1
+        version: 7.0.1
       papaparse:
         specifier: ^5.5.3
         version: 5.5.4
@@ -789,6 +789,9 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  binary-search@1.3.6:
+    resolution: {integrity: sha512-nbE1WxOTTrUWIfsfZ4aHGYu5DOuNkbxGokjV6Z2kxfJK3uaAb8zNK1muzOeipoLHZjInT4Br88BHpzevc681xA==}
+
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
@@ -816,6 +819,9 @@ packages:
   check-error@2.1.3:
     resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
     engines: {node: '>= 16'}
+
+  cheminfo-types@1.15.0:
+    resolution: {integrity: sha512-shv45WN2u0yN9EHH1bisNrv+fy4Cw+eLM5lOoriP67mePrwbHZ1kJqg90C8GEU7K1A8gJsicEoVZHcuBbuul/w==}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -909,6 +915,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fft.js@4.0.4:
+    resolution: {integrity: sha512-f9c00hphOgeQTlDyavwTtu6RiK8AIFjD6+jvXkNkpeQ7rirK3uFWVpalkoS4LAwbdX7mfZ8aoBfFVQX1Re/8aw==}
 
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
@@ -1036,14 +1045,17 @@ packages:
   ml-distance-euclidean@2.0.0:
     resolution: {integrity: sha512-yC9/2o8QF0A3m/0IXqCTXCzz2pNEzvmcE/9HFKOZGnTjatvBbsn4lWYJkxENkA4Ug2fnYl7PXQxnPi21sgMy/Q==}
 
+  ml-distance-euclidean@3.0.1:
+    resolution: {integrity: sha512-jEEu/1a73ArPmIiwOzrcah6TfhtV19dCKnnM7JvdR2xTzyVJFGgIIR78Vg8Pl9z2NVeSRoFOpzc0910sPMINsA==}
+
   ml-distance-matrix@2.0.1:
     resolution: {integrity: sha512-6wt3bvK8WzAjyuBt9+wnyGanphrAZyqJGwiEEfuknfu8IQBtHYWpyLhjtQ8R7rjiPyXlF9eP7GcI5L7OA1NLEQ==}
 
   ml-hclust@3.1.0:
     resolution: {integrity: sha512-EI6VCHrPHOsPsgZ1a/auhdxzHpEZ+kV7yjCGGIU+EWtb/XV1ZWSg5GlU32Qt4T05m98wCSQykPBhIg5aW6JjuQ==}
 
-  ml-kmeans@6.0.0:
-    resolution: {integrity: sha512-aziEZqeHxczaDvo1qkfCrC7XNVAPevs6PigAzy7dp9TzeQI7oGan6NfCgADwL/FAlA/wWi+1DkV8da6pXfuuPg==}
+  ml-kmeans@7.0.1:
+    resolution: {integrity: sha512-yrBTntVdMf9gdMQnHBY1HQ5IhFdTAW8hcUhagiktqmx3lwR8VC2ONyP9oJfaVzMkummOd/XKgT64E2DgJlmfrQ==}
 
   ml-levenberg-marquardt@2.1.1:
     resolution: {integrity: sha512-2+HwUqew4qFFFYujYlQtmFUrxCB4iJAPqnUYro3P831wj70eJZcANwcRaIMGUVaH9NDKzfYuA4N5u67KExmaRA==}
@@ -1051,14 +1063,17 @@ packages:
   ml-matrix@6.14.0:
     resolution: {integrity: sha512-5W31+w+6jIm05l85N3Ik04fl+5LfN1lyJLBrEM/r/j7YmvwRclcUyQGXGFWXnN7ASzVjsAnAa3FUXrduAt168A==}
 
-  ml-nearest-vector@2.0.1:
-    resolution: {integrity: sha512-gMPwNm3eed59ewJYiCK/+wElWBfNoD6JizH965ePiQgCo0pvQL63w4YdZhLs5eUV0iWcq6brVMUBL6iMySHnqg==}
+  ml-nearest-vector@3.0.1:
+    resolution: {integrity: sha512-7UQ60sPS1Dpe6N6zuEsaL3nrUGHkaiSmjWcQHfMYFfV1dgp6TiPtv3ZtdLHwpf1jS0KQDSkw9pycJO1gYBiEoA==}
 
-  ml-random@0.5.0:
-    resolution: {integrity: sha512-zLJBmNb34LOz+vN6BD8l3aYm/VWYWbmAunrLMPs4dHf4gTl8BWlhil72j56HubPg86zrXioIs4qoHq7Topy6tw==}
+  ml-random@2.0.0:
+    resolution: {integrity: sha512-/ziHm0qyvsvwRy0y+EhmhTKbvq+9ghqf9UYSexKeyx8pp+9avDBLctYaopdTaJ1HU4qnJPEy7XH0CVeh9tHIgQ==}
 
-  ml-xsadd@2.0.0:
-    resolution: {integrity: sha512-VoAYUqmPRmzKbbqRejjqceGFp3VF81Qe8XXFGU0UXLxB7Mf4GGvyGq5Qn3k4AiQgDEV6WzobqlPOd+j0+m6IrA==}
+  ml-spectra-processing@14.29.2:
+    resolution: {integrity: sha512-5ZKp8lMAJeBMH0bP+BLmw+OLvneK8KA3GwPwc4DpWgJkX/iBFlvQhgmsMUMPV8quKs0uNJUi0aVnbUVBl1RFQQ==}
+
+  ml-xsadd@3.0.1:
+    resolution: {integrity: sha512-Fz2q6dwgzGM8wYKGArTUTZDGa4lQFA2Vi6orjGeTVRy22ZnQFKlJuwS9n8NRviqz1KHAHAzdKJwbnYhdo38uYg==}
 
   mnemonist@0.39.8:
     resolution: {integrity: sha512-vyWo2K3fjrUw8YeeZ1zF0fy6Mu59RHokURlld8ymdUPjMlD9EC9ov1/YPqTgqRvUN9nTr3Gqfz29LYAmu0PHPQ==}
@@ -1933,6 +1948,8 @@ snapshots:
 
   baseline-browser-mapping@2.10.43: {}
 
+  binary-search@1.3.6: {}
+
   boolean@3.2.0: {}
 
   braces@3.0.3:
@@ -1960,6 +1977,8 @@ snapshots:
       pathval: 2.0.1
 
   check-error@2.1.3: {}
+
+  cheminfo-types@1.15.0: {}
 
   convert-source-map@2.0.0: {}
 
@@ -2048,6 +2067,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  fft.js@4.0.4: {}
 
   fill-range@7.1.1:
     dependencies:
@@ -2165,6 +2186,8 @@ snapshots:
 
   ml-distance-euclidean@2.0.0: {}
 
+  ml-distance-euclidean@3.0.1: {}
+
   ml-distance-matrix@2.0.1: {}
 
   ml-hclust@3.1.0:
@@ -2174,12 +2197,13 @@ snapshots:
       ml-distance-matrix: 2.0.1
       ml-matrix: 6.14.0
 
-  ml-kmeans@6.0.0:
+  ml-kmeans@7.0.1:
     dependencies:
-      ml-distance-euclidean: 2.0.0
+      ml-distance-euclidean: 3.0.1
       ml-matrix: 6.14.0
-      ml-nearest-vector: 2.0.1
-      ml-random: 0.5.0
+      ml-nearest-vector: 3.0.1
+      ml-random: 2.0.0
+      ml-spectra-processing: 14.29.2
 
   ml-levenberg-marquardt@2.1.1:
     dependencies:
@@ -2191,15 +2215,24 @@ snapshots:
       is-any-array: 3.0.0
       ml-array-rescale: 2.0.0
 
-  ml-nearest-vector@2.0.1:
+  ml-nearest-vector@3.0.1:
     dependencies:
-      ml-distance-euclidean: 2.0.0
+      ml-distance-euclidean: 3.0.1
 
-  ml-random@0.5.0:
+  ml-random@2.0.0:
     dependencies:
-      ml-xsadd: 2.0.0
+      ml-xsadd: 3.0.1
 
-  ml-xsadd@2.0.0: {}
+  ml-spectra-processing@14.29.2:
+    dependencies:
+      binary-search: 1.3.6
+      cheminfo-types: 1.15.0
+      fft.js: 4.0.4
+      is-any-array: 3.0.0
+      ml-matrix: 6.14.0
+      ml-xsadd: 3.0.1
+
+  ml-xsadd@3.0.1: {}
 
   mnemonist@0.39.8:
     dependencies:
