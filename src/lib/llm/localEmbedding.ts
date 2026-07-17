@@ -118,8 +118,12 @@ export async function embedLocally(
   model: string,
   onStatus?: (message: string) => void,
 ): Promise<Float32Array[]> {
-  const pipe = await getPipeline(model || DEFAULT_LOCAL_EMBEDDING_MODEL, onStatus);
-  const prefixed = texts.map((t) => `passage: ${t}`);
+  const resolvedModel = model || DEFAULT_LOCAL_EMBEDDING_MODEL;
+  const pipe = await getPipeline(resolvedModel, onStatus);
+  // e5 系モデルは "passage: " プレフィックスが必要(他のモデルには付けない)
+  const prefixed = /(^|\/)(multilingual-)?e5-/.test(resolvedModel.toLowerCase())
+    ? texts.map((t) => `passage: ${t}`)
+    : texts;
   const output = await pipe(prefixed, { pooling: "mean", normalize: true });
   // output は [n, dim] の Tensor
   const [n, dim] = output.dims as [number, number];

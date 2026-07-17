@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { listModels, listModelsDetailed, probeChat, requestEmbeddings } from "../lib/llm/client";
 import { useSettings } from "../store/settings";
 import { PRESETS, type PresetId, isProviderConfigured, resolveEndpoint } from "../types/settings";
@@ -144,7 +144,10 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
 
   // プロバイダ選択時にモデル一覧を自動取得(失敗しても標準リストで選べるので無視)。
   // pricing を返すプロバイダ(OpenRouter 等)は実勢価格も表示する。
+  // 素早くプロバイダを切り替えた場合に古いレスポンスが混入しないよう、世代番号で無効化する。
+  const fetchSeqRef = useRef(0);
   const autoFetchModels = async (id: PresetId | null) => {
+    const seq = ++fetchSeqRef.current;
     if (!id || id === "gemini-nano" || id === "local-embedding") return;
     try {
       const selected = PRESETS.find((p) => p.id === id);
@@ -156,6 +159,7 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
         authHeader: selected?.authHeader ?? "bearer",
         extraHeaders: selected?.extraHeaders,
       });
+      if (seq !== fetchSeqRef.current) return; // 別プロバイダに切り替え済み
       setModels(list.map((m) => m.id));
       setFetchedPrices(new Map(list.filter((m) => m.price).map((m) => [m.id, m.price as string])));
     } catch {
@@ -243,8 +247,10 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
               setSlot({
                 provider: id,
                 model: selected ? (slot === "chat" ? selected.chatModel : selected.embeddingModel) : "",
+                reasoningEffort: "", // 前プロバイダの設定を持ち越さない
               });
               setModels([]);
+              setFetchedPrices(new Map());
               setTestResult(selected?.corsNote ?? null);
               void autoFetchModels(id);
             }}

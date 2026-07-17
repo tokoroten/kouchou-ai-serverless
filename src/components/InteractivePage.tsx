@@ -71,6 +71,17 @@ export function InteractivePage({ projectId }: { projectId: string }) {
     [umapParams],
   );
   const paramsDirty = appliedParams !== null && appliedParams !== JSON.stringify(toUmapInput());
+  // 表示中の座標を計算したときのシード(KMeans/ward の再計算にも同じ値を使う)
+  const appliedSeed = (() => {
+    if (appliedParams) {
+      try {
+        return (JSON.parse(appliedParams) as { seed?: string }).seed ?? "kouchou-ai";
+      } catch {
+        // fallthrough
+      }
+    }
+    return umapParams.seed || "kouchou-ai";
+  })();
 
   useEffect(() => {
     return () => {
@@ -196,10 +207,10 @@ export function InteractivePage({ projectId }: { projectId: string }) {
     const nums = [...new Set([clamp(Math.min(lv1, lv2)), clamp(Math.max(lv1, lv2))])];
     const embedded: number[][] = new Array(count);
     for (let i = 0; i < count; i++) embedded[i] = [coords.x[i], coords.y[i]];
-    const result = clusterXY(embedded, nums, "kouchou-ai");
+    const result = clusterXY(embedded, nums, appliedSeed);
     setAssignments(result.assignments);
     setLabelsPreview(null);
-  }, [umapDone, coords, lv1, lv2, preprocessed?.emb]);
+  }, [umapDone, coords, lv1, lv2, preprocessed?.emb, appliedSeed]);
 
   // ラベリング → レポート生成(オンデマンド)
   const runLabelling = async () => {

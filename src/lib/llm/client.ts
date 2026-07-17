@@ -240,11 +240,16 @@ async function requestChatInner(endpoint: EndpointConfig, options: ChatOptions, 
         if (e instanceof LlmError && e.status !== undefined && e.status >= 400 && e.status < 500) {
           lastError = e;
           if (withReasoning) {
-            // reasoning パラメータが原因の可能性 → 以後は外して再試行
+            // reasoning パラメータが原因の可能性 → まず外して再試行
             includeReasoning = false;
             continue;
           }
-          if (format !== null) break; // 次の response_format へフォールバック
+          if (format !== null) {
+            // reasoning なしでも失敗 = response_format が原因。
+            // reasoning の疑いは晴れたので、次のフォーマットでは再び付けて試す
+            if (endpoint.reasoningEffort) includeReasoning = true;
+            break; // 次の response_format へフォールバック
+          }
         }
         throw e;
       }

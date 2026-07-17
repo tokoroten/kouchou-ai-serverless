@@ -267,8 +267,16 @@ export const PRESETS: Preset[] = [
     chatModel: "",
     embeddingModel: "Xenova/multilingual-e5-small",
     corsNote:
-      "transformers.js でブラウザ内で埋め込みを計算します(データ送信なし・無料)。初回にモデル(約120MB)をダウンロードします。WebGPU 対応ブラウザで高速、非対応時は WASM で動作します。",
+      "transformers.js でブラウザ内で埋め込みを計算します(データ送信なし・無料)。モデル名は Hugging Face のリポジトリ名(「組織名/モデル名」形式。https://huggingface.co で公開されている ONNX 対応モデル)で、初回にブラウザへダウンロードされキャッシュされます。候補から選ぶだけでも使えます。WebGPU 対応ブラウザで高速、非対応時は WASM で動作します。",
     slot: "embedding",
+    knownEmbeddingModels: [
+      // price 欄はサイズ/次元の目安として使う(ローカルなので費用は0)
+      { id: "Xenova/paraphrase-multilingual-MiniLM-L12-v2", price: "384次元・約120MB・最速" },
+      { id: "Xenova/multilingual-e5-small", price: "384次元・約120MB・軽量" },
+      { id: "Xenova/multilingual-e5-base", price: "768次元・約280MB・バランス" },
+      { id: "Xenova/multilingual-e5-large", price: "1024次元・約560MB・高精度" },
+      { id: "Xenova/bge-m3", price: "1024次元・約570MB・多言語最高精度" },
+    ],
   },
   {
     id: "custom",
