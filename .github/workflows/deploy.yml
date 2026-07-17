@@ -3,6 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request: # Dependabot 等の PR でも lint/test/build を検証する
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # PR のビルドが main のデプロイを取り消さないよう ref ごとに分ける
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +37,8 @@ jobs:
           path: dist
 
   deploy:
+    # デプロイは main への push のみ(PR ではビルド検証まで)
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
