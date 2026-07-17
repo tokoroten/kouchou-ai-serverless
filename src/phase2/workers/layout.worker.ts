@@ -1,159 +1,195 @@
-// 表示用の力学レイアウト Worker(一次資料「UMAPと表示」+ レビュー置換表)。
-// - 初期座標(通常版の UMAP)からのウォームスタート。毎回ランダム初期化しない
-// - 辺の重み変更時は現在座標から数 step ずつ再最適化し、座標をストリーミングする
-// - stance 軸: 各 step 後に x += λ(stanceScore·scale − x) とナッジして方向を安定させる
-//   (umap-js は損失をカスタムできないための置換。レビュー置換表のとおり)
+import seedrandom from "seedrandom";
+import { UMAP } from "umap-js";
+
+// 表示用レイアウト Worker: 本物の UMAP を「結合特徴の距離 + ウォームスタート」で回す。
+//
+// 発想(ユーザ提案 = 一次資料の combinedVector): 埋め込みに各ブロック(stance 等)を
+// √weight でスケールして結合したベクトルの距離で UMAP する。
+//   d² = Σ wᵦ·dᵦ² = (Σwᵦ)·(1 − 加重平均類似度)
+// 候補辺には各ブロックの類似度が保存済みなので、メインスレッドで計算した
+// 加重平均類似度(weights)から結合距離を復元し、公開 API setPrecomputedKNN で
+// UMAP に渡す。UMAP は正規の fuzzy simplicial set 構築から実行される。
+// weight=0 のブロックは距離に寄与しない = 分離に使われない。
+//
+// ウォームスタート: initializeOptimization() は embedding を参照で保持するため、
+// initializeFit() 後に embedding の中身を現在座標へ書き換えれば続きから最適化される
+// (Python 版 UMAP の init=array 相当)。
+
+type UmapInternals = {
+  embedding: number[][];
+  optimizationState: { currentEpoch: number };
+  getNEpochs: () => number;
+  step: () => number;
+};
 
 export type LayoutWorkerRequest =
   | { type: "init"; x: Float32Array; y: Float32Array }
-  | {
-      type: "edges";
-      source: Int32Array;
-      target: Int32Array;
-      weights: Float32Array;
-      threshold: number;
-    }
+  | { type: "edges"; source: Int32Array; target: Int32Array; weights: Float32Array; threshold: number }
   | { type: "stanceAxis"; enabled: boolean; scores: Float32Array | null; lambda: number }
   | { type: "stop" };
 
 export type LayoutWorkerResponse = { type: "coords"; x: Float32Array; y: Float32Array; alpha: number };
 
-let x: Float32Array = new Float32Array(0);
-let y: Float32Array = new Float32Array(0);
-let vx: Float32Array = new Float32Array(0);
-let vy: Float32Array = new Float32Array(0);
-let edgeSource: Int32Array = new Int32Array(0);
-let edgeTarget: Int32Array = new Int32Array(0);
-let edgeWeights: Float32Array = new Float32Array(0);
-let edgeThreshold = 0;
+const KNN_K = 15;
+const TICK_MS = 33; // ~30fps
+const STEPS_PER_TICK = 3;
+
+let coordsX: Float32Array = new Float32Array(0);
+let coordsY: Float32Array = new Float32Array(0);
+let umap: UmapInternals | null = null;
+let nEpochs = 0;
+// 表示の安定化: UMAP はセンタリングを持たず質量が漂流・スケールも変動するため、
+// 出力座標を「初期レイアウトの重心と RMS 半径」に正規化する(最適化には触れない)
+let targetRms = 10;
 let stanceEnabled = false;
 let stanceScores: Float32Array | null = null;
-let stanceLambda = 0.1;
-let alpha = 0; // 冷却係数。辺の更新でリセット
+let stanceLambda = 0.15;
 let timer: ReturnType<typeof setInterval> | null = null;
 
-const TICK_MS = 33; // ~30fps
-const ALPHA_DECAY = 0.985;
-const ALPHA_MIN = 0.003;
-const REPULSION = 0.55;
-const ATTRACTION = 0.06;
-const DAMPING = 0.6;
-const CELL = 1.2; // 反発計算のグリッドセルサイズ(座標スケール依存)
+/** 候補辺の結合類似度から kNN を作り、UMAP を組み立てて現在座標でウォームスタートする */
+function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float32Array, threshold: number): void {
+  const n = coordsX.length;
+  if (n === 0) return;
 
-// 決定的な微小ジッタ(完全に重なった点の対称性を壊す)
-function jitter(i: number): number {
-  return ((Math.sin(i * 127.1) * 43758.5453) % 1) * 0.02;
+  // 隣接リスト(しきい値以下の辺は使わない)
+  const neighbors: { j: number; d: number }[][] = Array.from({ length: n }, () => []);
+  let usable = 0;
+  for (let e = 0; e < source.length; e++) {
+    const w = weights[e];
+    if (w <= threshold) continue;
+    // 結合ベクトルの距離: d = sqrt(1 - 加重平均類似度)(単調変換。スケールは UMAP が局所正規化する)
+    const d = Math.sqrt(Math.max(0, 1 - w));
+    neighbors[source[e]].push({ j: target[e], d });
+    neighbors[target[e]].push({ j: source[e], d });
+    usable++;
+  }
+  if (usable === 0) return; // 辺が無ければ現状維持
+
+  // 各点の kNN(自分自身を先頭に、結合距離の近い順)。UMAP は矩形配列を要求するため self でパディング
+  const knnIndices: number[][] = new Array(n);
+  const knnDistances: number[][] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    neighbors[i].sort((a, b) => a.d - b.d);
+    const indices = [i];
+    const distances = [0];
+    for (let k = 0; k < Math.min(KNN_K - 1, neighbors[i].length); k++) {
+      indices.push(neighbors[i][k].j);
+      distances.push(neighbors[i][k].d);
+    }
+    while (indices.length < KNN_K) {
+      indices.push(i);
+      distances.push(0);
+    }
+    knnIndices[i] = indices;
+    knnDistances[i] = distances;
+  }
+
+  const rng = seedrandom("phase2-layout");
+  const instance = new UMAP({
+    nComponents: 2,
+    nNeighbors: KNN_K,
+    minDist: 0.15,
+    spread: 1.5,
+    random: () => rng(),
+  });
+  instance.setPrecomputedKNN(knnIndices, knnDistances);
+  // X は kNN が事前計算済みのため参照されない(次元1のダミー)
+  const dummyX = Array.from({ length: n }, () => [0]);
+  nEpochs = instance.initializeFit(dummyX);
+
+  // ウォームスタート: embedding の中身を現在座標へ書き換える(参照は維持される)
+  const internals = instance as unknown as UmapInternals;
+  const embedding = internals.embedding;
+  for (let i = 0; i < n; i++) {
+    embedding[i][0] = coordsX[i];
+    embedding[i][1] = coordsY[i];
+  }
+  umap = internals;
+  if (!timer) timer = setInterval(tick, TICK_MS);
 }
 
 function tick(): void {
-  const n = x.length;
-  if (n === 0 || alpha < ALPHA_MIN) return;
+  if (!umap) return;
+  const state = umap.optimizationState;
+  if (state.currentEpoch >= nEpochs) return; // 収束済み(次の edges 更新まで待機)
 
-  // 反発: グリッド分割して近傍セルのみ計算(O(n·近傍))。
-  // 注意: カットオフ半径(2×CELL)を完全に覆うには ±2 セル(5×5)を見る必要がある。
-  // 3×3 だと距離 1〜2 セルのペアがセル境界の位置次第で無視され、力が軸方向に
-  // 異方的になって点が格子状に結晶化する(実際に発生したバグ)。
-  const cutoff2 = CELL * CELL * 4;
-  const grid = new Map<string, number[]>();
-  for (let i = 0; i < n; i++) {
-    const key = `${Math.floor(x[i] / CELL)}:${Math.floor(y[i] / CELL)}`;
-    const cell = grid.get(key);
-    if (cell) cell.push(i);
-    else grid.set(key, [i]);
-  }
-  for (let i = 0; i < n; i++) {
-    const cx = Math.floor(x[i] / CELL);
-    const cy = Math.floor(y[i] / CELL);
-    let fx = 0;
-    let fy = 0;
-    for (let gx = cx - 2; gx <= cx + 2; gx++) {
-      for (let gy = cy - 2; gy <= cy + 2; gy++) {
-        const cell = grid.get(`${gx}:${gy}`);
-        if (!cell) continue;
-        for (const j of cell) {
-          if (j === i) continue;
-          let dx = x[i] - x[j];
-          let dy = y[i] - y[j];
-          if (dx === 0 && dy === 0) {
-            dx = jitter(i) - jitter(j);
-            dy = jitter(i + 1) - jitter(j + 1);
-          }
-          const d2 = dx * dx + dy * dy + 0.01;
-          if (d2 > cutoff2) continue;
-          const f = REPULSION / d2;
-          fx += dx * f;
-          fy += dy * f;
-        }
-      }
-    }
-    vx[i] += fx * alpha;
-    vy[i] += fy * alpha;
+  for (let s = 0; s < STEPS_PER_TICK && state.currentEpoch < nEpochs; s++) {
+    umap.step();
   }
 
-  // 引力: 重みの高い辺は近く、低い辺は遠くへ(バネ)
-  for (let e = 0; e < edgeSource.length; e++) {
-    const w = edgeWeights[e];
-    if (w <= edgeThreshold) continue;
-    const i = edgeSource[e];
-    const j = edgeTarget[e];
-    const dx = x[j] - x[i];
-    const dy = y[j] - y[i];
-    const dist = Math.sqrt(dx * dx + dy * dy) + 1e-6;
-    const rest = 0.3 + (1 - w) * 2.5; // 重みが高いほど近づく
-    const f = (ATTRACTION * (dist - rest) * w) / dist;
-    vx[i] += dx * f * alpha;
-    vy[i] += dy * f * alpha;
-    vx[j] -= dx * f * alpha;
-    vy[j] -= dy * f * alpha;
-  }
+  const embedding = umap.embedding;
+  const n = embedding.length;
 
-  // 速度適用 + 減衰 + stance 軸ナッジ。
-  // クランプは軸別ではなくベクトル長で行う(軸別だと移動が軸方向に量子化され格子を助長する)
+  // 重心と RMS 半径を計算し、表示座標を初期スケールへ正規化する
+  let cx = 0;
+  let cy = 0;
   for (let i = 0; i < n; i++) {
-    const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
-    const scale = speed > 0.5 ? 0.5 / speed : 1;
-    x[i] += vx[i] * scale;
-    y[i] += vy[i] * scale;
-    vx[i] *= DAMPING;
-    vy[i] *= DAMPING;
+    cx += embedding[i][0];
+    cy += embedding[i][1];
+  }
+  cx /= n;
+  cy /= n;
+  let rms = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = embedding[i][0] - cx;
+    const dy = embedding[i][1] - cy;
+    rms += dx * dx + dy * dy;
+  }
+  rms = Math.sqrt(rms / n) || 1;
+  const scale = targetRms / rms;
+
+  for (let i = 0; i < n; i++) {
+    // stance 軸ナッジ(埋め込み空間で実施。ターゲットも埋め込みスケールに合わせる)
     if (stanceEnabled && stanceScores) {
-      // x 方向を stance スコアに弱くアンカーする(スケールは座標系に合わせて8)
-      x[i] += stanceLambda * alpha * (stanceScores[i] * 8 - x[i]);
+      const targetX = cx + stanceScores[i] * rms * 1.5;
+      embedding[i][0] += stanceLambda * (targetX - embedding[i][0]);
     }
+    coordsX[i] = (embedding[i][0] - cx) * scale;
+    coordsY[i] = (embedding[i][1] - cy) * scale;
   }
-  alpha *= ALPHA_DECAY;
-
-  self.postMessage(
-    { type: "coords", x: x.slice(), y: y.slice(), alpha } satisfies LayoutWorkerResponse,
-    // slice したバッファを transfer
-    { transfer: [] },
-  );
+  const alpha = 1 - state.currentEpoch / Math.max(1, nEpochs);
+  self.postMessage({ type: "coords", x: coordsX.slice(), y: coordsY.slice(), alpha } satisfies LayoutWorkerResponse);
 }
 
 self.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
   const message = event.data;
   switch (message.type) {
-    case "init":
-      x = message.x.slice();
-      y = message.y.slice();
-      vx = new Float32Array(x.length);
-      vy = new Float32Array(y.length);
-      alpha = 0.3;
-      if (!timer) timer = setInterval(tick, TICK_MS);
+    case "init": {
+      coordsX = message.x.slice();
+      coordsY = message.y.slice();
+      umap = null;
+      // 初期レイアウトの RMS 半径を表示スケールの基準にする
+      const n = coordsX.length;
+      if (n > 0) {
+        let cx = 0;
+        let cy = 0;
+        for (let i = 0; i < n; i++) {
+          cx += coordsX[i];
+          cy += coordsY[i];
+        }
+        cx /= n;
+        cy /= n;
+        let rms = 0;
+        for (let i = 0; i < n; i++) {
+          const dx = coordsX[i] - cx;
+          const dy = coordsY[i] - cy;
+          rms += dx * dx + dy * dy;
+        }
+        targetRms = Math.sqrt(rms / n) || 10;
+      }
       break;
+    }
     case "edges":
-      edgeSource = message.source;
-      edgeTarget = message.target;
-      edgeWeights = message.weights;
-      edgeThreshold = message.threshold;
-      alpha = 1.0; // 再加熱して現在座標から再最適化
-      if (!timer) timer = setInterval(tick, TICK_MS);
+      rebuildOptimizer(message.source, message.target, message.weights, message.threshold);
       break;
     case "stanceAxis":
       stanceEnabled = message.enabled;
       stanceScores = message.scores;
       stanceLambda = message.lambda;
-      alpha = Math.max(alpha, 0.5);
+      // 軸の切替だけでも再加熱する(現在座標から数エポック再最適化)
+      if (umap) {
+        umap.optimizationState.currentEpoch = Math.min(umap.optimizationState.currentEpoch, Math.floor(nEpochs * 0.7));
+      }
       break;
     case "stop":
       if (timer) clearInterval(timer);

@@ -494,9 +494,16 @@ kouchou-ai-serverless/
      graph ブロック別kNN和集合 + Louvain(graphology) / clusterTracker Jaccard ID追跡 /
      labelTemplate / workers: graph.worker + layout.worker)。
    - レビュー必須修正を反映: 候補kNN = semantic∪topic∪stance∪reason の和集合、
-     stance/reason 重みは focus+context(選択クラスタ内)+トピック条件付きのみ、
-     レイアウトは UMAP 再実行ではなく候補グラフ上の力学シミュレーション
-     (現座標ウォームスタート + stance 軸ナッジ)。
+     stance/reason 重みは focus+context(選択クラスタ内)+トピック条件付きのみ。
+   - **レイアウトは本物の UMAP のウォームスタート**: 結合特徴
+     (√weight スケールのブロック結合 = 一次資料の combinedVector。
+     d² = Σwᵦ·dᵦ² は加重平均類似度の単調変換)の距離を候補辺上で計算し、
+     公開 API `setPrecomputedKNN` で UMAP に渡して正規の fuzzy simplicial set から実行。
+     ウォームスタートは umap-js の内部構造(initializeOptimization が embedding を
+     参照保持する)を利用し、initializeFit 後に embedding を現在座標へ書き換えて実現
+     (Python 版の init=array 相当)。表示は重心+RMS 正規化で漂流を抑制、
+     stance 軸は step 後のナッジ。当初の自作力学シミュレーションは
+     反発力の近傍探索バグで格子状に結晶化したため廃止した。
    - UI はトップレベルナビ「次世代版」(`#/phase2`)から。通常版と結果は混ぜない。
    - **実データ検証(150コメント・543意見・実API)**: stance 混在クラスタ(純度27%)が
      focus+context の stance 重み付けで「中立・保留 / 条件付き反対 / 明確な反対」の
