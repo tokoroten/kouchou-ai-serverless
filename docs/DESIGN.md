@@ -463,9 +463,17 @@ kouchou-ai-serverless/
    (ユーザ要望)。解決済みの `EndpointConfig` をプロジェクト作成時にスナップショットする。
 2. **プロバイダ追加**: Azure OpenAI(`api-key` ヘッダ、`/openai/v1` 互換パス)、
    AWS Bedrock(OpenAI 互換エンドポイント、CORS 注意書き付き)、
+   **Anthropic**(公式 OpenAI 互換レイヤ + `anthropic-dangerous-direct-browser-access` ヘッダ)、
+   **Grok (xAI)**(OpenAI 互換)、
    **Chrome 内蔵 Gemini Nano**(Prompt API、チャット)、
    **transformers.js + WebGPU ローカル埋め込み**(M8 の任意項目を前倒し)。
    OpenRouter には無償モデル検索と応答テスト(タイムアウト検知)を追加。
+   抽象化方針: プロバイダ専用クライアントは作らず、全プロバイダを OpenAI 互換として扱い、
+   差分は `EndpointConfig` のメタデータ(`authHeader` / `extraHeaders` / 既知モデルリスト)で吸収する。
+   **reasoning effort** はチャットスロットの設定で指定可能(OpenAI/xAI は `reasoning_effort`、
+   OpenRouter は `reasoning: {effort}`、非対応プロバイダで 400 の場合は外して自動再試行)。
+   設定画面には標準モデルリスト + `/models` 自動取得によるモデル候補選択(datalist)と、
+   キー・チャット・埋め込みを一括確認する**ヘルスチェック**がある。
 3. **リアルタイムモード(§7.2 の軽量版)を初期リリースに含めた**:
    UMAP 収束のライブ表示 + クラスタ数スライダーによる KMeans+ward の即時再計算 +
    オンデマンドラベリング。フェーズ2の完全版(stance 抽出・グラフクラスタリング)とは別物。

@@ -92,7 +92,21 @@ function buildHeaders(endpoint: EndpointConfig): Record<string, string> {
       headers.Authorization = `Bearer ${endpoint.apiKey}`;
     }
   }
+  // プロバイダ固有の追加ヘッダ(例: Anthropic のブラウザ直アクセス許可)
+  if (endpoint.extraHeaders) Object.assign(headers, endpoint.extraHeaders);
   return headers;
+}
+
+/** reasoning effort をプロバイダ方言に合わせて body に載せる */
+function applyReasoningEffort(body: Record<string, unknown>, endpoint: EndpointConfig): boolean {
+  const effort = endpoint.reasoningEffort;
+  if (!effort) return false;
+  if (endpoint.baseUrl.includes("openrouter.ai")) {
+    body.reasoning = { effort };
+  } else {
+    body.reasoning_effort = effort;
+  }
+  return true;
 }
 
 /** 429/5xx をリトライしつつ fetch する */
@@ -189,6 +203,8 @@ async function requestChatInner(endpoint: EndpointConfig, options: ChatOptions, 
     : [null];
 
   let lastError: unknown = null;
+  // reasoning effort 非対応プロバイダでは 400 になるため、外して1回だけ再試行する
+  let includeReasoning = true;
   for (const format of formats) {
     const messages = [...options.messages];
     if (options.jsonSchema && format === null) {
@@ -199,31 +215,39 @@ async function requestChatInner(endpoint: EndpointConfig, options: ChatOptions, 
         content: `${last.content}\n\n必ずJSONのみで応答してください。`,
       };
     }
-    const body: Record<string, unknown> = {
-      model: endpoint.model,
-      messages,
-    };
-    if (format) body.response_format = format;
-    try {
-      const res = await fetchWithRetry(
-        url,
-        { method: "POST", headers: buildHeaders(endpoint), body: JSON.stringify(body) },
-        signal,
-      );
-      const data = (await res.json()) as Record<string, unknown>;
-      options.onUsage?.(extractUsage(data));
-      const choices = data.choices as Array<{ message?: { content?: string } }> | undefined;
-      const content = choices?.[0]?.message?.content;
-      if (typeof content !== "string") throw new LlmError("応答に content がありません");
-      return content;
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw e;
-      // 400 系(response_format 非対応)は次のフォーマットへフォールバック
-      if (e instanceof LlmError && e.status !== undefined && e.status >= 400 && e.status < 500 && format !== null) {
-        lastError = e;
-        continue;
+    const attempts: boolean[] = includeReasoning && endpoint.reasoningEffort ? [true, false] : [false];
+    for (const withReasoning of attempts) {
+      const body: Record<string, unknown> = {
+        model: endpoint.model,
+        messages,
+      };
+      if (format) body.response_format = format;
+      if (withReasoning) applyReasoningEffort(body, endpoint);
+      try {
+        const res = await fetchWithRetry(
+          url,
+          { method: "POST", headers: buildHeaders(endpoint), body: JSON.stringify(body) },
+          signal,
+        );
+        const data = (await res.json()) as Record<string, unknown>;
+        options.onUsage?.(extractUsage(data));
+        const choices = data.choices as Array<{ message?: { content?: string } }> | undefined;
+        const content = choices?.[0]?.message?.content;
+        if (typeof content !== "string") throw new LlmError("応答に content がありません");
+        return content;
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") throw e;
+        if (e instanceof LlmError && e.status !== undefined && e.status >= 400 && e.status < 500) {
+          lastError = e;
+          if (withReasoning) {
+            // reasoning パラメータが原因の可能性 → 以後は外して再試行
+            includeReasoning = false;
+            continue;
+          }
+          if (format !== null) break; // 次の response_format へフォールバック
+        }
+        throw e;
       }
-      throw e;
     }
   }
   throw lastError ?? new LlmError("chat 呼び出しに失敗しました");

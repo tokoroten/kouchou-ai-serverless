@@ -23,10 +23,11 @@ TypeScript で再実装し、静的サイトとして配布しています。サ
   UMAP・KMeans・ward 法クラスタリングは Web Worker でブラウザ内実行。
 - **本家互換** — 出力は本家 kouchou-ai の `hierarchical_result.json` とスキーマ互換。
   本家が生成した JSON の読み込み・表示も可能。
-- **多様な LLM プロバイダ** — OpenAI / OpenRouter(無償モデル検索付き) / Azure OpenAI /
-  AWS Bedrock / LM Studio / Ollama / 任意の OpenAI 互換 API。
-  さらに **Chrome 内蔵 Gemini Nano**(チャット)と **transformers.js + WebGPU**(埋め込み)により
-  完全ローカル・無料での分析にも対応。
+- **多様な LLM プロバイダ** — OpenAI / Anthropic (Claude) / Grok (xAI) /
+  OpenRouter(無償モデル検索付き) / Azure OpenAI / AWS Bedrock / LM Studio / Ollama /
+  任意の OpenAI 互換 API。標準モデルリスト+自動取得によるモデル選択、reasoning effort 指定、
+  一括ヘルスチェック付き。さらに **Chrome 内蔵 Gemini Nano**(チャット)と
+  **transformers.js + WebGPU**(埋め込み)により完全ローカル・無料での分析にも対応。
 - **チェックポイントと再開** — 抽出はコメント単位、埋め込みはバッチ単位、ラベリングはクラスタ単位で
   IndexedDB に逐次保存。タブを閉じても API コストを失わずに再開できます。
 - **前処理と後処理の分離** — 高コストな前処理(意見抽出+埋め込み)の結果を使い回して、

@@ -98,6 +98,76 @@ describe("requestChat フォールバック", () => {
   });
 });
 
+describe("reasoning effort と追加ヘッダ", () => {
+  it("reasoningEffort 指定時は reasoning_effort を送る", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: テスト用
+    let sentBody: any;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return okResponse("ok");
+      }),
+    );
+    await requestChat({ ...endpoint, reasoningEffort: "high" }, { messages: [{ role: "user", content: "hi" }] });
+    expect(sentBody.reasoning_effort).toBe("high");
+  });
+
+  it("OpenRouter では reasoning: {effort} 形式で送る", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: テスト用
+    let sentBody: any;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return okResponse("ok");
+      }),
+    );
+    await requestChat(
+      { baseUrl: "https://openrouter.ai/api/v1", apiKey: "k", model: "m", reasoningEffort: "low" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(sentBody.reasoning).toEqual({ effort: "low" });
+  });
+
+  it("reasoning 非対応(400)なら外して再試行する", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = String(init?.body);
+        bodies.push(body);
+        if (body.includes("reasoning_effort")) return new Response("unsupported parameter", { status: 400 });
+        return okResponse("ok");
+      }),
+    );
+    const result = await requestChat(
+      { ...endpoint, reasoningEffort: "medium" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(result).toBe("ok");
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).not.toContain("reasoning_effort");
+  });
+
+  it("extraHeaders が送信される(Anthropic ブラウザ直アクセス等)", async () => {
+    let sentHeaders: Record<string, string> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sentHeaders = init?.headers as Record<string, string>;
+        return okResponse("ok");
+      }),
+    );
+    await requestChat(
+      { ...endpoint, extraHeaders: { "anthropic-dangerous-direct-browser-access": "true" } },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(sentHeaders["anthropic-dangerous-direct-browser-access"]).toBe("true");
+    expect(sentHeaders.Authorization).toBe("Bearer k");
+  });
+});
+
 describe("Semaphore", () => {
   it("並列数を制限する", async () => {
     const semaphore = new Semaphore(2);

@@ -6,6 +6,10 @@ export type EndpointConfig = {
   model: string; // 例: gpt-4o-mini / text-embedding-3-small
   /** 認証ヘッダの方式。既定 bearer。Azure OpenAI は api-key */
   authHeader?: "bearer" | "api-key";
+  /** プロバイダ固有の追加ヘッダ(例: Anthropic のブラウザ直アクセス許可) */
+  extraHeaders?: Record<string, string>;
+  /** reasoning effort(対応モデルのみ)。空なら送信しない */
+  reasoningEffort?: "" | "minimal" | "low" | "medium" | "high";
 };
 
 // プロバイダごとの接続情報。API キーはプロバイダ単位で一度だけ入力し、
@@ -18,6 +22,8 @@ export type ProviderConfig = {
 export type SlotSelection = {
   provider: PresetId | null;
   model: string;
+  /** reasoning effort(chat スロットのみ・対応モデルのみ)。空なら送信しない */
+  reasoningEffort?: "" | "minimal" | "low" | "medium" | "high";
 };
 
 export type Settings = {
@@ -45,6 +51,8 @@ export function resolveEndpoint(settings: Settings, slot: "chat" | "embedding"):
     apiKey: provider?.apiKey ?? "",
     model: selection.model || (slot === "chat" ? (preset?.chatModel ?? "") : (preset?.embeddingModel ?? "")),
     authHeader: preset?.authHeader ?? "bearer",
+    extraHeaders: preset?.extraHeaders,
+    reasoningEffort: slot === "chat" ? (selection.reasoningEffort ?? "") : "",
   };
 }
 
@@ -53,6 +61,8 @@ export function isProviderConfigured(id: PresetId, settings: Settings): boolean 
   const provider = settings.providers[id];
   switch (id) {
     case "openai":
+    case "anthropic":
+    case "grok":
     case "openrouter":
       return !!provider?.apiKey;
     case "azure":
@@ -70,6 +80,8 @@ export function isProviderConfigured(id: PresetId, settings: Settings): boolean 
 
 export type PresetId =
   | "openai"
+  | "anthropic"
+  | "grok"
   | "openrouter"
   | "azure"
   | "bedrock"
@@ -89,6 +101,10 @@ export type Preset = {
   /** このプリセットを表示するスロット(省略時は両方) */
   slot?: "chat" | "embedding";
   authHeader?: "bearer" | "api-key";
+  extraHeaders?: Record<string, string>;
+  /** 標準モデルリスト(接続テスト前でも選べるようにする) */
+  knownChatModels?: string[];
+  knownEmbeddingModels?: string[];
 };
 
 export const PRESETS: Preset[] = [
@@ -99,6 +115,30 @@ export const PRESETS: Preset[] = [
     chatModel: "gpt-4o-mini",
     embeddingModel: "text-embedding-3-small",
     corsNote: "そのまま動作します。",
+    knownChatModels: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5.1", "o4-mini"],
+    knownEmbeddingModels: ["text-embedding-3-small", "text-embedding-3-large"],
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic (Claude)",
+    baseUrl: "https://api.anthropic.com/v1",
+    chatModel: "claude-haiku-4-5",
+    embeddingModel: "",
+    corsNote:
+      "Anthropic の OpenAI 互換エンドポイントを使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。ブラウザ直アクセス許可ヘッダを自動送信します。",
+    slot: "chat",
+    extraHeaders: { "anthropic-dangerous-direct-browser-access": "true", "anthropic-version": "2023-06-01" },
+    knownChatModels: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+  },
+  {
+    id: "grok",
+    label: "Grok (xAI)",
+    baseUrl: "https://api.x.ai/v1",
+    chatModel: "grok-4-fast",
+    embeddingModel: "",
+    corsNote: "xAI の OpenAI 互換 API を使用します(chat のみ。embeddings はないため埋め込みは別プロバイダを設定)。",
+    slot: "chat",
+    knownChatModels: ["grok-4-fast", "grok-4", "grok-3-mini"],
   },
   {
     id: "openrouter",
@@ -107,6 +147,12 @@ export const PRESETS: Preset[] = [
     chatModel: "openai/gpt-4o-mini",
     embeddingModel: "",
     corsNote: "chat のみ対応。embeddings はないため、埋め込みスロットは別プロバイダ(OpenAI 等)を設定してください。",
+    knownChatModels: [
+      "openai/gpt-4o-mini",
+      "anthropic/claude-haiku-4.5",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-chat-v3.1",
+    ],
   },
   {
     id: "azure",

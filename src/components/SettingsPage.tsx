@@ -8,7 +8,7 @@ import { PRESETS, type PresetId, isProviderConfigured, resolveEndpoint } from ".
 // 2. chat / embedding スロットは「設定済みプロバイダ」からのみ選択可能
 // 3. 疎通確認: モデル一覧取得 / 埋め込み1件 / チャット応答テスト(タイムアウト検知)
 
-const KEY_REQUIRED: PresetId[] = ["openai", "openrouter", "azure", "bedrock"];
+const KEY_REQUIRED: PresetId[] = ["openai", "anthropic", "grok", "openrouter", "azure", "bedrock"];
 const URL_EDITABLE: PresetId[] = ["azure", "bedrock", "lmstudio", "ollama", "custom"];
 const LOCAL_PROVIDERS: PresetId[] = ["gemini-nano", "local-embedding"];
 
@@ -89,6 +89,29 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
   });
 
   const endpoint = resolveEndpoint(settings, slot);
+  const preset = PRESETS.find((p) => p.id === selection.provider);
+  // 標準モデルリスト + 接続テスト/自動取得したモデルリストをマージ
+  const knownModels = (slot === "chat" ? preset?.knownChatModels : preset?.knownEmbeddingModels) ?? [];
+  const modelChoices = [...new Set([...knownModels, ...models])];
+
+  // プロバイダ選択時にモデル一覧を自動取得(失敗しても標準リストで選べるので無視)
+  const autoFetchModels = async (id: PresetId | null) => {
+    if (!id || id === "gemini-nano" || id === "local-embedding") return;
+    try {
+      const selected = PRESETS.find((p) => p.id === id);
+      const provider = settings.providers[id];
+      const list = await listModels({
+        baseUrl: provider?.baseUrl || selected?.baseUrl || "",
+        apiKey: provider?.apiKey ?? "",
+        model: "",
+        authHeader: selected?.authHeader ?? "bearer",
+        extraHeaders: selected?.extraHeaders,
+      });
+      setModels(list);
+    } catch {
+      // 標準リストのみ
+    }
+  };
 
   // チャット応答テスト: 小リクエストを投げてレイテンシ計測(30秒でタイムアウト検知)
   const probeResponse = async () => {
@@ -162,13 +185,14 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
             value={selection.provider ?? ""}
             onChange={(e) => {
               const id = (e.target.value || null) as PresetId | null;
-              const preset = PRESETS.find((p) => p.id === id);
+              const selected = PRESETS.find((p) => p.id === id);
               setSlot({
                 provider: id,
-                model: preset ? (slot === "chat" ? preset.chatModel : preset.embeddingModel) : "",
+                model: selected ? (slot === "chat" ? selected.chatModel : selected.embeddingModel) : "",
               });
               setModels([]);
-              setTestResult(preset?.corsNote ?? null);
+              setTestResult(selected?.corsNote ?? null);
+              void autoFetchModels(id);
             }}
           >
             <option value="">選択してください</option>
@@ -180,22 +204,54 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
           </select>
           {selection.provider && (
             <>
-              <label>モデル</label>
-              {models.length > 0 ? (
-                <select value={selection.model} onChange={(e) => setSlot({ model: e.target.value })}>
-                  {!models.includes(selection.model) && <option value={selection.model}>{selection.model}</option>}
-                  {models.map((m) => (
-                    <option key={m} value={m}>
+              <label>
+                モデル{" "}
+                <span className="note" style={{ fontWeight: 400 }}>
+                  (候補から選択 or 直接入力。取得済み {models.length} 件 + 標準 {knownModels.length} 件)
+                </span>
+              </label>
+              {modelChoices.length > 0 && (
+                <div className="row" style={{ marginBottom: 4 }}>
+                  {modelChoices.slice(0, 8).map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      className={selection.model === m ? "primary" : ""}
+                      style={{ padding: "4px 10px", fontSize: "0.85rem" }}
+                      onClick={() => setSlot({ model: m })}
+                    >
                       {m}
-                    </option>
+                    </button>
                   ))}
-                </select>
-              ) : (
-                <input
-                  value={selection.model}
-                  onChange={(e) => setSlot({ model: e.target.value })}
-                  placeholder="モデル名(接続テストで一覧を取得できます)"
-                />
+                </div>
+              )}
+              <input
+                list={`model-choices-${slot}`}
+                value={selection.model}
+                onChange={(e) => setSlot({ model: e.target.value })}
+                placeholder="モデル名(入力すると候補が絞り込まれます)"
+              />
+              <datalist id={`model-choices-${slot}`}>
+                {modelChoices.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              {slot === "chat" && selection.provider !== "gemini-nano" && (
+                <>
+                  <label>reasoning effort(対応モデルのみ。非対応なら自動で外して再試行します)</label>
+                  <select
+                    value={selection.reasoningEffort ?? ""}
+                    onChange={(e) =>
+                      setSlot({ reasoningEffort: e.target.value as "" | "minimal" | "low" | "medium" | "high" })
+                    }
+                  >
+                    <option value="">指定しない(既定)</option>
+                    <option value="minimal">minimal</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </>
               )}
               <div className="row" style={{ marginTop: 12 }}>
                 <button type="button" onClick={testConnection} disabled={testing}>
@@ -221,6 +277,104 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
   );
 }
 
+type HealthItem = { label: string; status: "ok" | "ng" | "running"; detail: string };
+
+function HealthCheckCard() {
+  const { settings } = useSettings();
+  const [items, setItems] = useState<HealthItem[] | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    const results: HealthItem[] = [];
+    const push = (item: HealthItem) => {
+      results.push(item);
+      setItems([...results]);
+    };
+    const update = (status: HealthItem["status"], detail: string) => {
+      results[results.length - 1] = { ...results[results.length - 1], status, detail };
+      setItems([...results]);
+    };
+
+    const chat = resolveEndpoint(settings, "chat");
+    const embedding = resolveEndpoint(settings, "embedding");
+
+    // 1. スロット設定の有無
+    push({
+      label: "チャット設定",
+      status: chat.baseUrl ? "ok" : "ng",
+      detail: chat.baseUrl ? `${settings.chatSlot.provider} / ${chat.model}` : "プロバイダ未選択",
+    });
+    push({
+      label: "埋め込み設定",
+      status: embedding.baseUrl ? "ok" : "ng",
+      detail: embedding.baseUrl ? `${settings.embeddingSlot.provider} / ${embedding.model}` : "プロバイダ未選択",
+    });
+
+    // 2. チャット疎通(モデル一覧 → 実応答)
+    if (chat.baseUrl) {
+      push({ label: "チャット API キー / モデル一覧", status: "running", detail: "確認中..." });
+      try {
+        const list = await listModels(chat);
+        update("ok", `${list.length} モデル取得`);
+      } catch (e) {
+        update("ng", e instanceof Error ? e.message : String(e));
+      }
+      push({ label: "チャット応答(実リクエスト)", status: "running", detail: "最大30秒..." });
+      const probe = await probeChat(chat, 30_000);
+      update(probe.ok ? "ok" : "ng", probe.message);
+    }
+
+    // 3. 埋め込み疎通(1件埋め込んで次元数を確認)
+    if (embedding.baseUrl) {
+      push({ label: "埋め込み(実リクエスト)", status: "running", detail: "確認中..." });
+      try {
+        if (embedding.baseUrl === "local:transformers") {
+          const { embedLocallyViaWorker } = await import("../lib/llm/localEmbedding");
+          const vectors = await embedLocallyViaWorker(["ヘルスチェック"], embedding.model, (m) => update("running", m));
+          update("ok", `ローカル埋め込み成功 / 次元数 ${vectors[0]?.length}`);
+        } else {
+          const vectors = await requestEmbeddings(embedding, { texts: ["ヘルスチェック"], timeoutMs: 30_000 });
+          update("ok", `次元数 ${vectors[0]?.length}`);
+        }
+      } catch (e) {
+        update("ng", e instanceof Error ? e.message : String(e));
+      }
+    }
+    setRunning(false);
+  };
+
+  const icon = (status: HealthItem["status"]) => (status === "ok" ? "✅" : status === "ng" ? "❌" : "⏳");
+
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h2 style={{ margin: 0 }}>ヘルスチェック</h2>
+        <button type="button" className="primary" onClick={run} disabled={running}>
+          {running ? "チェック中..." : "一括疎通確認を実行"}
+        </button>
+      </div>
+      <p className="note">API キー・チャット・埋め込みの疎通をまとめて確認します(小さな実リクエストが発生します)。</p>
+      {items && (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {items.map((item) => (
+            <li key={item.label} style={{ padding: "4px 0" }}>
+              {icon(item.status)} <b>{item.label}</b> — <span className="note">{item.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {items && !running && (
+        <p className="note">
+          {items.every((i) => i.status === "ok")
+            ? "✅ すべて正常です。レポート作成に進めます。"
+            : "❌ 失敗した項目があります。キー・モデル名・CORS 設定を確認してください。"}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { settings, setConcurrency, clearAll } = useSettings();
   return (
@@ -229,6 +383,7 @@ export function SettingsPage() {
       <ProviderKeysCard />
       <SlotCard slot="chat" />
       <SlotCard slot="embedding" />
+      <HealthCheckCard />
       <div className="card">
         <h2>実行設定</h2>
         <label>LLM リクエストの並列数(既定 8)</label>
