@@ -482,9 +482,32 @@ kouchou-ai-serverless/
    (§7.2 のキャッシュ方針を前倒し)。UMAP 座標も独立チェックポイントし、
    クラスタ数変更時は UMAP を再計算しない。前処理データのファイルエクスポート形式
    (`.preprocessed.json`、embeddings は base64)を追加。
-5. **未実装(M8 の一部)**: File System Access API による自動保存、
-   transformers.js 埋め込みの Worker 化(現状メインスレッド)。
+5. **未実装(M8 の一部)**: File System Access API による自動保存。
 6. **ライセンス**: AGPL-3.0(本家準拠)。
+7. **フェーズ2(次世代版)実装(2026-07-17)**: INTERACTIVE_DESIGN_REVIEW の実装順序に従い着手。
+   - **Phase 0(stance 抽出品質検証)実施済み**: 代表9文+追加10文の評価セット
+     (`scripts/phase0-stance-eval.ts`)で gpt-5-mini が 19/19 全問正解、
+     gpt-5.4-nano 89% / gpt-5.4-mini 95%(隣接許容)。引用検出は全モデル 100%。
+     合格ライン(85%/90%)クリアのため7分類のまま進行。**推奨モデル: gpt-5-mini**
+     (nano は引用文の stance を筆者に帰属させる弱点)。
+   - 実装: `src/phase2/`(types / enrich / codebook 2パス / similarity 累積L1 /
+     graph ブロック別kNN和集合 + Louvain(graphology) / clusterTracker Jaccard ID追跡 /
+     labelTemplate / workers: graph.worker + layout.worker)。
+   - レビュー必須修正を反映: 候補kNN = semantic∪topic∪stance∪reason の和集合、
+     stance/reason 重みは focus+context(選択クラスタ内)+トピック条件付きのみ、
+     レイアウトは UMAP 再実行ではなく候補グラフ上の力学シミュレーション
+     (現座標ウォームスタート + stance 軸ナッジ)。
+   - UI はトップレベルナビ「次世代版」(`#/phase2`)から。通常版と結果は混ぜない。
+   - **実データ検証(150コメント・543意見・実API)**: stance 混在クラスタ(純度27%)が
+     focus+context の stance 重み付けで「中立・保留 / 条件付き反対 / 明確な反対」の
+     3群に分裂し純度55%へ(`scripts/phase2-e2e.ts`)。重み付けの注意: クラスタを明示選択した
+     場合はトピックゲートを外す(選択自体がトピック条件。ゲートを残すと分裂力が不足する)。
+   - **事前分析済みサンプル**(`public/sample-phase2.json`, 1.1MB)を同梱し、
+     API キーなしで次世代版を体験可能(`#/phase2/sample`)。
+   - **属性軸**: 数値属性(年齢等)は範囲正規化距離の「分離強度」スライダー、
+     カテゴリカル属性(職業等)は色分けを既定とし、上位8カテゴリ+δ一致の分離も選択可
+     (0/1距離は断片化しやすいため色分け推奨の注記付き)。順序のある属性(学歴等)は
+     数値化して扱うのが望ましい。
 
 ## 12. 実装上の注意
 

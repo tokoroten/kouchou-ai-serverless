@@ -1,5 +1,6 @@
 import { HomePage } from "./components/HomePage";
 import { InteractivePage } from "./components/InteractivePage";
+import { Phase2Home, Phase2Page } from "./components/Phase2Page";
 import { RunPage } from "./components/RunPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { ViewerPage } from "./components/ViewerPage";
@@ -22,6 +23,10 @@ export function App() {
     page = <ViewerPage reportId={route.slice("/report/".length)} />;
   } else if (route.startsWith("/interactive/")) {
     page = <InteractivePage projectId={route.slice("/interactive/".length)} />;
+  } else if (route === "/phase2") {
+    page = <Phase2Home />;
+  } else if (route.startsWith("/phase2/")) {
+    page = <Phase2Page projectId={route.slice("/phase2/".length)} />;
   } else {
     page = <p>ページが見つかりません。</p>;
   }
@@ -34,6 +39,7 @@ export function App() {
         </a>
         <a href="#/">レポート一覧</a>
         <a href="#/new">新規作成</a>
+        <a href="#/phase2">次世代版</a>
         <a href="#/settings">設定</a>
         <a
           href="https://github.com/tokoroten/kouchou-ai-serverless"
