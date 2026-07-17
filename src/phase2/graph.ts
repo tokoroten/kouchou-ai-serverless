@@ -312,3 +312,56 @@ export function clusterByLouvain(
   }
   return communities;
 }
+
+/**
+ * 現在の 2D レイアウト座標の近接グラフで Louvain を回し、「見た目どおり」にクラスタを切り直す。
+ *
+ * 通常のクラスタリングは候補辺グラフ(特徴の類似度)に対して行うため、UMAP が視覚的に
+ * 複数の塊へ分離しても 1 コミュニティのまま残ることがある。このとき配置の近さから
+ * 切り直すことで、目に見える分離とクラスタ色・ラベルを一致させる。
+ * kNN はブルートフォース(想定規模 <1万点)、辺の重みはガウシアン(σ=kNN距離の中央値)。
+ */
+export function clusterByLayout(x: Float32Array, y: Float32Array, resolution: number, k = 8): Int32Array {
+  const n = x.length;
+  const communities = new Int32Array(n).fill(-1);
+  if (n === 0) return communities;
+  if (n <= k) return communities.fill(0);
+
+  // 各点の kNN(挿入選択で上位 k 件のみ保持)
+  const knn: { j: number; d: number }[][] = new Array(n);
+  const allDists: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const best: { j: number; d: number }[] = [];
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const dx = x[i] - x[j];
+      const dy = y[i] - y[j];
+      const d = dx * dx + dy * dy;
+      if (best.length < k) {
+        best.push({ j, d });
+        if (best.length === k) best.sort((a, b) => a.d - b.d);
+      } else if (d < best[k - 1].d) {
+        best[k - 1] = { j, d };
+        best.sort((a, b) => a.d - b.d);
+      }
+    }
+    knn[i] = best;
+    for (const { d } of best) allDists.push(d);
+  }
+  allDists.sort((a, b) => a - b);
+  const sigma2 = Math.max(allDists[Math.floor(allDists.length / 2)], 1e-12);
+
+  const graph = new Graph({ type: "undirected", multi: false });
+  for (let i = 0; i < n; i++) graph.addNode(i);
+  for (let i = 0; i < n; i++) {
+    for (const { j, d } of knn[i]) {
+      if (graph.hasEdge(i, j)) continue;
+      graph.addEdge(i, j, { weight: Math.exp(-d / (2 * sigma2)) });
+    }
+  }
+  const mapping = louvain(graph, { resolution, getEdgeWeight: "weight" });
+  for (const node of graph.nodes()) {
+    communities[Number(node)] = mapping[node];
+  }
+  return communities;
+}

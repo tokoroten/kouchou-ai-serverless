@@ -8,7 +8,7 @@ import { dexieCheckpoints } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
 import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
 import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
-import { type EdgeSet, clusterByLouvain, computeEdgeWeights, subsetEdges } from "../phase2/graph";
+import { type EdgeSet, clusterByLayout, clusterByLouvain, computeEdgeWeights, subsetEdges } from "../phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
 import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
 import { deserializeSample } from "../phase2/sample";
@@ -292,6 +292,15 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       () => recluster(activeRecords, activeEdges, next, assignmentRef.current, null, scopeRef.current !== null),
       250,
     );
+  };
+
+  // 現在の 2D 配置からクラスタを切り直す(UMAP が視覚的に分離した塊とクラスタ色を一致させる)。
+  // 通常の再クラスタリングは特徴グラフに対する Louvain なので、見た目の分離とはずれることがある
+  const reclusterFromLayout = () => {
+    const current = coordsRef.current;
+    if (!activeRecords || !current || current.x.length !== activeRecords.length) return;
+    const communities = clusterByLayout(current.x, current.y, view.resolution);
+    setAssignment(trackClusters(communities, assignmentRef.current));
   };
 
   // ---- トピック絞り込み(ドリルダウン) ----
@@ -779,6 +788,13 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   </select>
                 </label>
               )}
+              <button
+                type="button"
+                onClick={reclusterFromLayout}
+                title="現在の配置(2D座標)の近さでクラスタを切り直します。通常のクラスタリングは特徴グラフに対して自動で走りますが、レイアウトが視覚的に分離した塊を1クラスタのまま残すことがあるため、見た目とクラスタ色・ラベルを一致させたいときに押してください。粒度は「解像度」に従います"
+              >
+                見た目で切り直す
+              </button>
               <button
                 type="button"
                 onClick={saveCurrentView}

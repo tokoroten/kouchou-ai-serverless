@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { trackClusters } from "../src/phase2/clusterTracker";
 import { assignTagVector, normalizeTag } from "../src/phase2/codebook";
 import { normalizeStance } from "../src/phase2/enrich";
-import { buildCandidateEdges, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
+import { buildCandidateEdges, clusterByLayout, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
 import { summarizeCluster } from "../src/phase2/labelTemplate";
 import { sparseCosine, stanceSimilarity } from "../src/phase2/similarity";
 import type { Codebook, OpinionRecord, StanceDistribution } from "../src/phase2/types";
@@ -238,5 +238,33 @@ describe("summarizeCluster(テンプレートラベル)", () => {
     expect(summary.label).toContain("安全性");
     expect(summary.size).toBe(3);
     expect(summary.representatives).toHaveLength(3);
+  });
+});
+
+describe("clusterByLayout(見た目で切り直す)", () => {
+  it("2D 上で分離した2つの塊を別クラスタに切る", () => {
+    // 左の塊 20 点、右の塊 20 点(十分離す)
+    const n = 40;
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    for (let i = 0; i < 20; i++) {
+      x[i] = Math.cos(i) * 0.5;
+      y[i] = Math.sin(i * 1.7) * 0.5;
+      x[i + 20] = 30 + Math.cos(i * 1.3) * 0.5;
+      y[i + 20] = Math.sin(i) * 0.5;
+    }
+    const communities = clusterByLayout(x, y, 1.0);
+    const left = new Set(Array.from(communities.slice(0, 20)));
+    const right = new Set(Array.from(communities.slice(20)));
+    // 塊をまたいで同じクラスタにならない
+    for (const c of left) expect(right.has(c)).toBe(false);
+    expect(communities.every((c) => c >= 0)).toBe(true);
+  });
+
+  it("点数が k 以下なら全点を1クラスタにする", () => {
+    const x = new Float32Array([0, 1, 2]);
+    const y = new Float32Array([0, 0, 0]);
+    const communities = clusterByLayout(x, y, 1.0);
+    expect(Array.from(communities)).toEqual([0, 0, 0]);
   });
 });
