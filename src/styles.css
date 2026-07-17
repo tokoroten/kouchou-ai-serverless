@@ -258,6 +258,40 @@ table.preview-table {
   margin: 6px 0;
 }
 
+/* プロバイダ設定(折りたたみ行) */
+.provider-row {
+  border-top: 1px solid var(--border);
+}
+.provider-row summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.provider-row summary .note {
+  margin-left: auto;
+  text-align: right;
+}
+.provider-row summary::-webkit-details-marker {
+  display: none;
+}
+.provider-row summary::before {
+  content: "▸";
+  color: var(--muted);
+  margin-right: 4px;
+}
+.provider-row[open] summary::before {
+  content: "▾";
+}
+.provider-row summary:hover {
+  background: #f8fafc;
+}
+.provider-row .provider-body {
+  padding: 4px 4px 12px 20px;
+}
+
 /* フィルタパネル */
 .filter-chip {
   display: inline-flex;
