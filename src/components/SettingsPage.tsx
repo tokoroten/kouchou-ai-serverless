@@ -12,15 +12,81 @@ const KEY_REQUIRED: PresetId[] = ["openai", "anthropic", "grok", "openrouter", "
 const URL_EDITABLE: PresetId[] = ["azure", "bedrock", "lmstudio", "ollama", "custom"];
 const LOCAL_PROVIDERS: PresetId[] = ["gemini-nano", "local-embedding"];
 
-function ProviderKeysCard() {
+// OpenAI 互換・セルフホスト系はひとつのグループにまとめる
+const COMPAT_GROUP: PresetId[] = ["azure", "bedrock", "lmstudio", "ollama", "custom"];
+
+function ProviderRow({ presetId }: { presetId: PresetId }) {
   const { settings, setProvider, removeProvider } = useSettings();
-  // 設定済みを上に、それ以外は定義順
-  const providers = PRESETS.filter((p) => !LOCAL_PROVIDERS.includes(p.id));
-  const sorted = [
-    ...providers.filter((p) => isProviderConfigured(p.id, settings)),
-    ...providers.filter((p) => !isProviderConfigured(p.id, settings)),
+  const preset = PRESETS.find((p) => p.id === presetId);
+  if (!preset) return null;
+  const config = settings.providers[preset.id];
+  const configured = isProviderConfigured(preset.id, settings);
+  return (
+    <details className="provider-row">
+      <summary>
+        <span>
+          {configured ? "✅" : "○"} <b>{preset.label}</b>
+        </span>
+        <span className="note">
+          {configured
+            ? config?.apiKey
+              ? `キー設定済み (…${config.apiKey.slice(-4)})`
+              : "URL 設定済み"
+            : KEY_REQUIRED.includes(preset.id)
+              ? "API キーが必要"
+              : "URL 指定で利用可"}
+        </span>
+      </summary>
+      <div className="provider-body">
+        <div className="row">
+          {URL_EDITABLE.includes(preset.id) && (
+            <input
+              style={{ flex: 2, minWidth: 220 }}
+              placeholder={preset.baseUrl || "ベース URL (例: http://localhost:1234/v1)"}
+              value={config?.baseUrl ?? ""}
+              onChange={(e) => setProvider(preset.id, { baseUrl: e.target.value })}
+            />
+          )}
+          <input
+            style={{ flex: 3, minWidth: 220 }}
+            type="password"
+            autoComplete="off"
+            name={`api-key-${preset.id}`}
+            placeholder={
+              KEY_REQUIRED.includes(preset.id) ? "API キー (必須)" : "API キー (認証を有効にしている場合のみ)"
+            }
+            value={config?.apiKey ?? ""}
+            onChange={(e) =>
+              setProvider(preset.id, {
+                apiKey: e.target.value,
+                baseUrl: config?.baseUrl || preset.baseUrl,
+              })
+            }
+          />
+          {config && (
+            <button type="button" className="danger" onClick={() => removeProvider(preset.id)}>
+              削除
+            </button>
+          )}
+        </div>
+        <p className="note" style={{ margin: "4px 0 0" }}>
+          {preset.corsNote}
+        </p>
+      </div>
+    </details>
+  );
+}
+
+function ProviderKeysCard() {
+  const { settings } = useSettings();
+  const main = PRESETS.filter((p) => !LOCAL_PROVIDERS.includes(p.id) && !COMPAT_GROUP.includes(p.id));
+  const compat = PRESETS.filter((p) => COMPAT_GROUP.includes(p.id));
+  const sortConfigured = (list: typeof PRESETS) => [
+    ...list.filter((p) => isProviderConfigured(p.id, settings)),
+    ...list.filter((p) => !isProviderConfigured(p.id, settings)),
   ];
-  const configuredCount = providers.filter((p) => isProviderConfigured(p.id, settings)).length;
+  const configuredCount = [...main, ...compat].filter((p) => isProviderConfigured(p.id, settings)).length;
+  const compatConfigured = compat.filter((p) => isProviderConfigured(p.id, settings)).length;
 
   return (
     <div className="card">
@@ -29,64 +95,25 @@ function ProviderKeysCard() {
         使うプロバイダを開いてキーを入力してください({configuredCount} 件設定済み)。キーはこのブラウザ(localStorage)
         にのみ保存され、該当プロバイダの API 以外には送信されません。Gemini Nano・ローカル埋め込みはキー不要です。
       </p>
-      {sorted.map((preset) => {
-        const config = settings.providers[preset.id];
-        const configured = isProviderConfigured(preset.id, settings);
-        return (
-          <details key={preset.id} className="provider-row">
-            <summary>
-              <span>
-                {configured ? "✅" : "○"} <b>{preset.label}</b>
-              </span>
-              <span className="note">
-                {configured
-                  ? config?.apiKey
-                    ? `キー設定済み (…${config.apiKey.slice(-4)})`
-                    : "URL 設定済み"
-                  : KEY_REQUIRED.includes(preset.id)
-                    ? "API キーが必要"
-                    : "URL 指定で利用可"}
-              </span>
-            </summary>
-            <div className="provider-body">
-              <div className="row">
-                {URL_EDITABLE.includes(preset.id) && (
-                  <input
-                    style={{ flex: 2, minWidth: 220 }}
-                    placeholder={preset.baseUrl || "ベース URL (例: http://localhost:1234/v1)"}
-                    value={config?.baseUrl ?? ""}
-                    onChange={(e) => setProvider(preset.id, { baseUrl: e.target.value })}
-                  />
-                )}
-                <input
-                  style={{ flex: 3, minWidth: 220 }}
-                  type="password"
-                  autoComplete="off"
-                  name={`api-key-${preset.id}`}
-                  placeholder={
-                    KEY_REQUIRED.includes(preset.id) ? "API キー (必須)" : "API キー (認証を有効にしている場合のみ)"
-                  }
-                  value={config?.apiKey ?? ""}
-                  onChange={(e) =>
-                    setProvider(preset.id, {
-                      apiKey: e.target.value,
-                      baseUrl: config?.baseUrl || preset.baseUrl,
-                    })
-                  }
-                />
-                {config && (
-                  <button type="button" className="danger" onClick={() => removeProvider(preset.id)}>
-                    削除
-                  </button>
-                )}
-              </div>
-              <p className="note" style={{ margin: "4px 0 0" }}>
-                {preset.corsNote}
-              </p>
-            </div>
-          </details>
-        );
-      })}
+      {sortConfigured(main).map((preset) => (
+        <ProviderRow key={preset.id} presetId={preset.id} />
+      ))}
+      <details className="provider-row provider-group" open={compatConfigured > 0}>
+        <summary>
+          <span>
+            {compatConfigured > 0 ? "✅" : "○"} <b>OpenAI 互換・セルフホスト</b>
+            <span className="note"> (Azure / Bedrock / LM Studio / Ollama / カスタム)</span>
+          </span>
+          <span className="note">
+            {compatConfigured > 0 ? `${compatConfigured} 件設定済み` : "URL や独自キーで利用"}
+          </span>
+        </summary>
+        <div className="provider-body">
+          {sortConfigured(compat).map((preset) => (
+            <ProviderRow key={preset.id} presetId={preset.id} />
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
