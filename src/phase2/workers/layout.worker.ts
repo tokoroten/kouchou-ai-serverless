@@ -40,11 +40,20 @@ const ATTRACTION = 0.06;
 const DAMPING = 0.6;
 const CELL = 1.2; // 反発計算のグリッドセルサイズ(座標スケール依存)
 
+// 決定的な微小ジッタ(完全に重なった点の対称性を壊す)
+function jitter(i: number): number {
+  return ((Math.sin(i * 127.1) * 43758.5453) % 1) * 0.02;
+}
+
 function tick(): void {
   const n = x.length;
   if (n === 0 || alpha < ALPHA_MIN) return;
 
-  // 反発: グリッド分割して近傍セルのみ計算(O(n·近傍))
+  // 反発: グリッド分割して近傍セルのみ計算(O(n·近傍))。
+  // 注意: カットオフ半径(2×CELL)を完全に覆うには ±2 セル(5×5)を見る必要がある。
+  // 3×3 だと距離 1〜2 セルのペアがセル境界の位置次第で無視され、力が軸方向に
+  // 異方的になって点が格子状に結晶化する(実際に発生したバグ)。
+  const cutoff2 = CELL * CELL * 4;
   const grid = new Map<string, number[]>();
   for (let i = 0; i < n; i++) {
     const key = `${Math.floor(x[i] / CELL)}:${Math.floor(y[i] / CELL)}`;
@@ -57,16 +66,20 @@ function tick(): void {
     const cy = Math.floor(y[i] / CELL);
     let fx = 0;
     let fy = 0;
-    for (let gx = cx - 1; gx <= cx + 1; gx++) {
-      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+    for (let gx = cx - 2; gx <= cx + 2; gx++) {
+      for (let gy = cy - 2; gy <= cy + 2; gy++) {
         const cell = grid.get(`${gx}:${gy}`);
         if (!cell) continue;
         for (const j of cell) {
           if (j === i) continue;
-          const dx = x[i] - x[j];
-          const dy = y[i] - y[j];
+          let dx = x[i] - x[j];
+          let dy = y[i] - y[j];
+          if (dx === 0 && dy === 0) {
+            dx = jitter(i) - jitter(j);
+            dy = jitter(i + 1) - jitter(j + 1);
+          }
           const d2 = dx * dx + dy * dy + 0.01;
-          if (d2 > CELL * CELL * 4) continue;
+          if (d2 > cutoff2) continue;
           const f = REPULSION / d2;
           fx += dx * f;
           fy += dy * f;
@@ -94,10 +107,13 @@ function tick(): void {
     vy[j] -= dy * f * alpha;
   }
 
-  // 速度適用 + 減衰 + stance 軸ナッジ
+  // 速度適用 + 減衰 + stance 軸ナッジ。
+  // クランプは軸別ではなくベクトル長で行う(軸別だと移動が軸方向に量子化され格子を助長する)
   for (let i = 0; i < n; i++) {
-    x[i] += Math.max(-0.5, Math.min(0.5, vx[i]));
-    y[i] += Math.max(-0.5, Math.min(0.5, vy[i]));
+    const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+    const scale = speed > 0.5 ? 0.5 / speed : 1;
+    x[i] += vx[i] * scale;
+    y[i] += vy[i] * scale;
     vx[i] *= DAMPING;
     vy[i] *= DAMPING;
     if (stanceEnabled && stanceScores) {
