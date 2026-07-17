@@ -214,6 +214,9 @@ export function computeEdgeWeights(
   membership: (string | null)[] | null,
   /** 属性軸の辺類似度(attributes.computeAttributeSimilarities の結果)。無ければ null */
   attributeSims: Float32Array | null = null,
+  /** トピック絞り込み済み(ドリルダウン)のとき true: 構成上トピック条件が満たされているため
+   * stance/reason をゲートなしで全辺に適用できる */
+  topicConditioned = false,
 ): Float32Array {
   const weights = new Float32Array(edges.count);
   const focus = view.selectedClusterId;
@@ -222,7 +225,9 @@ export function computeEdgeWeights(
     const source = edges.source[e];
     const target = edges.target[e];
     const inFocus =
-      focus === null || (membership !== null && membership[source] === focus && membership[target] === focus);
+      topicConditioned ||
+      focus === null ||
+      (membership !== null && membership[source] === focus && membership[target] === focus);
     let w = view.semanticWeight * edges.semantic[e] + view.topicWeight * edges.topic[e];
     let totalWeight = view.semanticWeight + view.topicWeight;
     if (attrWeight > 0 && attributeSims) {
@@ -231,9 +236,9 @@ export function computeEdgeWeights(
       totalWeight += attrWeight;
     }
     if (inFocus && (view.stanceWeight > 0 || view.reasonWeight > 0)) {
-      // クラスタを明示選択している場合、その選択自体がトピック条件を満たすためゲート=1。
+      // トピック絞り込み中 or クラスタ明示選択中はトピック条件が満たされているためゲート=1。
       // 非選択(グローバル)の場合のみトピック類似度でゲートし、無関係トピックを賛否で混ぜない。
-      const gate = focus !== null ? 1 : Math.max(edges.topic[e], edges.semantic[e] * 0.5);
+      const gate = topicConditioned || focus !== null ? 1 : Math.max(edges.topic[e], edges.semantic[e] * 0.5);
       w += gate * (view.stanceWeight * edges.stance[e] + view.reasonWeight * edges.reason[e]);
       // 分母もゲート後の実効重みで正規化する(過剰な希釈を防ぐ)
       totalWeight += gate * (view.stanceWeight + view.reasonWeight);
@@ -241,6 +246,34 @@ export function computeEdgeWeights(
     weights[e] = totalWeight > 0 ? Math.max(0, w / totalWeight) : 0;
   }
   return weights;
+}
+
+/** トピック絞り込み(ドリルダウン)用: 部分集合に含まれる辺だけを抜き出し、インデックスを振り直す */
+export function subsetEdges(edges: EdgeSet, indices: number[]): EdgeSet {
+  const remap = new Map<number, number>();
+  indices.forEach((original, local) => remap.set(original, local));
+  const keep: number[] = [];
+  for (let e = 0; e < edges.count; e++) {
+    if (remap.has(edges.source[e]) && remap.has(edges.target[e])) keep.push(e);
+  }
+  const sub: EdgeSet = {
+    count: keep.length,
+    source: new Int32Array(keep.length),
+    target: new Int32Array(keep.length),
+    semantic: new Float32Array(keep.length),
+    topic: new Float32Array(keep.length),
+    stance: new Float32Array(keep.length),
+    reason: new Float32Array(keep.length),
+  };
+  keep.forEach((e, i) => {
+    sub.source[i] = remap.get(edges.source[e]) as number;
+    sub.target[i] = remap.get(edges.target[e]) as number;
+    sub.semantic[i] = edges.semantic[e];
+    sub.topic[i] = edges.topic[e];
+    sub.stance[i] = edges.stance[e];
+    sub.reason[i] = edges.reason[e];
+  });
+  return sub;
 }
 
 // ---- クラスタリング(Louvain。2次元座標ではなく重み付きグラフから決める) ----

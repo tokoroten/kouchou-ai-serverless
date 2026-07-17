@@ -8,7 +8,7 @@ import { dexieCheckpoints } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
 import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
 import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
-import { type EdgeSet, clusterByLouvain, computeEdgeWeights } from "../phase2/graph";
+import { type EdgeSet, clusterByLouvain, computeEdgeWeights, subsetEdges } from "../phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
 import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
 import { deserializeSample } from "../phase2/sample";
@@ -55,6 +55,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const [view, setView] = useState<ClusterView>(DEFAULT_VIEW);
   const [assignment, setAssignment] = useState<TrackedAssignment | null>(null);
   const [colorMode, setColorMode] = useState<"cluster" | "attribute">("cluster");
+  // トピック絞り込み(ドリルダウン)。indices はグローバルインデックス。
+  // 混在したままの全体 UMAP ではなく、トピックを選んでから全キャンバスで軸分離する
+  const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
   const [explanation, setExplanation] = useState<{ clusterId: string; text: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
   const [savedViews, setSavedViews] = useState<ClusterView[]>([]);
@@ -64,6 +67,15 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const assignmentRef = useRef<TrackedAssignment | null>(null);
   assignmentRef.current = assignment;
   const attrSimCacheRef = useRef<Map<string, Float32Array>>(new Map());
+  // 全体ビューの座標スナップショット(ドリルダウンから戻るときの復元用)
+  const globalCoordsRef = useRef<Coords | null>(null);
+
+  // スコープ適用後のレコードと辺(ドリルダウン中は部分集合)
+  const activeRecords = useMemo(
+    () => (records && scope ? scope.indices.map((i) => records[i]) : records),
+    [records, scope],
+  );
+  const activeEdges = useMemo(() => (edges && scope ? subsetEdges(edges, scope.indices) : edges), [edges, scope]);
 
   useEffect(() => {
     return () => {
@@ -183,7 +195,13 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   }
 
   // ---- レイアウト Worker ----
-  const startLayout = (initial: Coords, recs: OpinionRecord[], edgeSet: EdgeSet) => {
+  const startLayout = (
+    initial: Coords,
+    recs: OpinionRecord[],
+    edgeSet: EdgeSet,
+    viewForRecluster: ClusterView = DEFAULT_VIEW,
+    topicConditioned = false,
+  ) => {
     layoutWorkerRef.current?.terminate();
     const worker = new Worker(new URL("../phase2/workers/layout.worker.ts", import.meta.url), { type: "module" });
     layoutWorkerRef.current = worker;
@@ -201,11 +219,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       }
     };
     worker.postMessage({ type: "init", x: initial.x, y: initial.y });
-    recluster(recs, edgeSet, DEFAULT_VIEW, null, worker);
+    recluster(recs, edgeSet, viewForRecluster, null, worker, topicConditioned);
   };
 
   // ---- 属性類似度(選択された属性の辺類似度をキャッシュ) ----
-  const attributeInfos = useMemo(() => (records ? analyzeAttributes(records) : []), [records]);
+  const attributeInfos = useMemo(() => (activeRecords ? analyzeAttributes(activeRecords) : []), [activeRecords]);
 
   const attributeSimsFor = useCallback(
     (key: string | null, recs: OpinionRecord[], edgeSet: EdgeSet): Float32Array | null => {
@@ -230,10 +248,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       nextView: ClusterView,
       current: TrackedAssignment | null,
       worker?: Worker | null,
+      topicConditioned = false,
     ) => {
       const membership = current?.labels ?? null;
       const attrSims = nextView.attributeWeight > 0 ? attributeSimsFor(nextView.attributeKey, recs, edgeSet) : null;
-      const weights = computeEdgeWeights(edgeSet, nextView, membership, attrSims);
+      const weights = computeEdgeWeights(edgeSet, nextView, membership, attrSims, topicConditioned);
       const communities = clusterByLouvain(recs.length, edgeSet, weights, nextView, membership);
       const frozen =
         nextView.selectedClusterId !== null && membership !== null
@@ -262,17 +281,131 @@ export function Phase2Page({ projectId }: { projectId: string }) {
 
   // ビュー変更をデバウンスして再クラスタリング
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   const updateView = (patch: Partial<ClusterView>) => {
     const next = { ...view, ...patch };
     setView(next);
-    if (!records || !edges) return;
+    if (!activeRecords || !activeEdges) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => recluster(records, edges, next, assignmentRef.current), 250);
+    debounceRef.current = setTimeout(
+      () => recluster(activeRecords, activeEdges, next, assignmentRef.current, null, scopeRef.current !== null),
+      250,
+    );
+  };
+
+  // ---- トピック絞り込み(ドリルダウン) ----
+  const coordsRef = useRef<Coords | null>(null);
+  coordsRef.current = coords;
+
+  const enterScope = (indices: number[], label: string) => {
+    if (!records || !edges || !coordsRef.current || indices.length < 5) return;
+    // 全体ビューの座標を保存(戻るとき用。既にスコープ中なら保存済みのものを維持)
+    if (!scope) globalCoordsRef.current = { x: coordsRef.current.x.slice(), y: coordsRef.current.y.slice() };
+    // 現在の表示座標から部分集合を切り出してウォームスタート(連続的な遷移)
+    const current = coordsRef.current;
+    const globalIndices = scope ? indices.map((local) => scope.indices[local]) : indices;
+    const subX = new Float32Array(globalIndices.length);
+    const subY = new Float32Array(globalIndices.length);
+    // スコープ中にさらに絞る場合、current はローカル座標なので indices(ローカル)で引く
+    indices.forEach((idx, k) => {
+      subX[k] = current.x[idx];
+      subY[k] = current.y[idx];
+    });
+    attrSimCacheRef.current = new Map();
+    setScope({ indices: globalIndices, label });
+    setAssignment(null);
+    setExplanation(null);
+    const nextView = { ...view, selectedClusterId: null };
+    setView(nextView);
+    setCoords({ x: subX.slice(), y: subY.slice() });
+    const subRecords = globalIndices.map((i) => records[i]);
+    const subEdgeSet = subsetEdges(edges, globalIndices);
+    startLayout({ x: subX, y: subY }, subRecords, subEdgeSet, nextView, true);
+  };
+
+  const exitScope = () => {
+    if (!records || !edges) return;
+    attrSimCacheRef.current = new Map();
+    setScope(null);
+    setAssignment(null);
+    setExplanation(null);
+    const nextView = { ...view, selectedClusterId: null, stanceWeight: 0, reasonWeight: 0 };
+    setView(nextView);
+    const initial = globalCoordsRef.current;
+    if (initial) {
+      setCoords({ x: initial.x.slice(), y: initial.y.slice() });
+      startLayout(initial, records, edges, nextView, false);
+    }
+  };
+
+  // コードブックのトピック別件数(ドリルダウンの選択肢)
+  const topicCounts = useMemo(() => {
+    if (!records || !codebook) return [];
+    const counts = new Map<number, number>();
+    for (const record of records) {
+      let top = -1;
+      let topWeight = 0;
+      for (const [index, weight] of record.topicVector) {
+        if (weight > topWeight) {
+          top = index;
+          topWeight = weight;
+        }
+      }
+      if (top >= 0) counts.set(top, (counts.get(top) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([index, count]) => ({ index, label: codebook.topics[index] ?? "?", count }));
+  }, [records, codebook]);
+
+  const drillToTopic = (topicIndex: number) => {
+    if (!records || !codebook) return;
+    // スコープはグローバル基準で選ぶ(現在のスコープからではなく全体から)
+    if (scope) exitScope();
+    const indices: number[] = [];
+    records.forEach((record, i) => {
+      let top = -1;
+      let topWeight = 0;
+      for (const [index, weight] of record.topicVector) {
+        if (weight > topWeight) {
+          top = index;
+          topWeight = weight;
+        }
+      }
+      if (top === topicIndex || (record.topicVector.get(topicIndex) ?? 0) >= 0.5) indices.push(i);
+    });
+    // exitScope 直後は coords がグローバルに戻っているため、次のフレームで enter する
+    setTimeout(() => enterScopeGlobal(indices, codebook.topics[topicIndex] ?? "トピック"), 50);
+  };
+
+  // グローバルインデックスで直接スコープに入る(drillToTopic 用)
+  const enterScopeGlobal = (globalIndices: number[], label: string) => {
+    if (!records || !edges || globalIndices.length < 5) return;
+    const base = globalCoordsRef.current ?? coordsRef.current;
+    if (!base) return;
+    if (!scopeRef.current) globalCoordsRef.current = { x: base.x.slice(), y: base.y.slice() };
+    const subX = new Float32Array(globalIndices.length);
+    const subY = new Float32Array(globalIndices.length);
+    globalIndices.forEach((idx, k) => {
+      subX[k] = base.x[idx];
+      subY[k] = base.y[idx];
+    });
+    attrSimCacheRef.current = new Map();
+    setScope({ indices: globalIndices, label });
+    setAssignment(null);
+    setExplanation(null);
+    const nextView = { ...view, selectedClusterId: null };
+    setView(nextView);
+    setCoords({ x: subX.slice(), y: subY.slice() });
+    const subRecords = globalIndices.map((i) => records[i]);
+    const subEdgeSet = subsetEdges(edges, globalIndices);
+    startLayout({ x: subX, y: subY }, subRecords, subEdgeSet, nextView, true);
   };
 
   // ---- クラスタ要約(テンプレートラベル) ----
   const clusterSummaries = useMemo(() => {
-    if (!records || !codebook || !assignment) return [];
+    if (!activeRecords || !codebook || !assignment) return [];
     const byLabel = new Map<string, number[]>();
     assignment.labels.forEach((label, i) => {
       if (label === null) return;
@@ -284,8 +417,8 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       .filter(([, members]) => members.length >= 3)
       .sort((a, b) => b[1].length - a[1].length)
       .slice(0, 30)
-      .map(([clusterId, members]) => ({ clusterId, members, ...summarizeCluster(members, records, codebook) }));
-  }, [records, codebook, assignment]);
+      .map(([clusterId, members]) => ({ clusterId, members, ...summarizeCluster(members, activeRecords, codebook) }));
+  }, [activeRecords, codebook, assignment]);
 
   // ---- 散布図 ----
   const colorByCluster = useMemo(() => {
@@ -298,11 +431,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
 
   // 属性色分け: 数値はグラデーション、カテゴリカルはパレット
   const attributeColors = useMemo(() => {
-    if (colorMode !== "attribute" || !records || !view.attributeKey) return null;
+    if (colorMode !== "attribute" || !activeRecords || !view.attributeKey) return null;
     const info = attributeInfos.find((a) => a.key === view.attributeKey);
     if (!info) return null;
-    const encoded = encodeAttribute(records, info);
-    return records.map((_, i) => {
+    const encoded = encodeAttribute(activeRecords, info);
+    return activeRecords.map((_, i) => {
       const v = encoded[i];
       if (v < 0) return "#cccccc";
       if (info.type === "numeric") {
@@ -313,11 +446,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       }
       return SOFT_COLORS[Math.round(v) % SOFT_COLORS.length];
     });
-  }, [colorMode, records, view.attributeKey, attributeInfos]);
+  }, [colorMode, activeRecords, view.attributeKey, attributeInfos]);
 
   const plotData = useMemo(() => {
-    if (!records || !coords) return [];
-    const colors = records.map((_, i) => {
+    if (!activeRecords || !coords) return [];
+    const colors = activeRecords.map((_, i) => {
       const label = assignment?.labels[i];
       if (view.selectedClusterId && label !== view.selectedClusterId) return "#d8d8d8";
       if (attributeColors) return attributeColors[i];
@@ -330,7 +463,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         mode: "markers",
         type: "scattergl",
         marker: { size: 5, color: colors, opacity: 0.85 },
-        text: records.map((r) => {
+        text: activeRecords.map((r) => {
           const stance = STANCE_LABEL_JA[dominantStance(r.enrichment.stance)];
           const attrs = r.attributes
             ? `<br>${Object.entries(r.attributes)
@@ -341,11 +474,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         }),
         hoverinfo: "text",
         hoverlabel: { align: "left", bgcolor: "white", font: { size: 12, color: "#333" } },
-        customdata: records.map((_, i) => i),
+        customdata: activeRecords.map((_, i) => i),
         showlegend: false,
       },
     ];
-  }, [records, coords, assignment, colorByCluster, attributeColors, view.selectedClusterId]);
+  }, [activeRecords, coords, assignment, colorByCluster, attributeColors, view.selectedClusterId]);
 
   const annotations = useMemo(() => {
     if (!coords) return [];
@@ -384,11 +517,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   // ---- LLM 解説(オンデマンド・構成ハッシュでキャッシュ) ----
   const explainCluster = async (clusterId: string) => {
     const summary = clusterSummaries.find((s) => s.clusterId === clusterId);
-    if (!summary || !records || !chatEndpoint.baseUrl) return;
+    if (!summary || !activeRecords || !chatEndpoint.baseUrl) return;
     setExplaining(true);
     try {
       const checkpoints = dexieCheckpoints(checkpointsId);
-      const compositionKey = fnv1a(summary.members.map((i) => records[i].id).join(" "));
+      const compositionKey = fnv1a(summary.members.map((i) => activeRecords[i].id).join(" "));
       const cached = await checkpoints.getChunk("phase2-explain", compositionKey);
       if (typeof cached === "string") {
         setExplanation({ clusterId, text: cached });
@@ -403,7 +536,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         `stance 分布: ${stanceText}`,
         `上位論点: ${summary.topReasons.map((r) => r.label).join(", ")}`,
         "代表的な意見:",
-        ...summary.representatives.map((i) => `- ${records[i].claimText}`),
+        ...summary.representatives.map((i) => `- ${activeRecords[i].claimText}`),
       ].join("\n");
       const text = await requestChat(chatEndpoint, {
         messages: [
@@ -489,6 +622,41 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       {ready && (
         <>
           <div className="card">
+            <div className="row" style={{ marginBottom: 8 }}>
+              <b>表示範囲:</b>
+              {scope === null ? (
+                <>
+                  <span>全体({activeRecords?.length.toLocaleString()} 意見)</span>
+                  <select
+                    style={{ width: "auto" }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value !== "") drillToTopic(Number(e.target.value));
+                    }}
+                  >
+                    <option value="">トピックで絞り込む...</option>
+                    {topicCounts.map((topic) => (
+                      <option key={topic.index} value={topic.index}>
+                        {topic.label} ({topic.count})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="note">
+                    トピックを絞ってから軸分離すると、全キャンバスを使った明瞭な分離になります
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    <b>{scope.label}</b>({scope.indices.length.toLocaleString()} 意見)
+                  </span>
+                  <button type="button" onClick={exitScope}>
+                    ← 全体に戻る
+                  </button>
+                  <span className="note">スタンス/理由/属性スライダーがこの範囲に直接使えます</span>
+                </>
+              )}
+            </div>
             <div className="row">
               <Slider
                 label="意味"
@@ -506,14 +674,14 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 label="スタンス"
                 value={view.stanceWeight}
                 max={3}
-                disabled={view.selectedClusterId === null}
+                disabled={view.selectedClusterId === null && scope === null}
                 onChange={(v) => updateView({ stanceWeight: v })}
               />
               <Slider
                 label="理由"
                 value={view.reasonWeight}
                 max={3}
-                disabled={view.selectedClusterId === null}
+                disabled={view.selectedClusterId === null && scope === null}
                 onChange={(v) => updateView({ reasonWeight: v })}
               />
               <Slider
@@ -610,6 +778,16 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 </button>{" "}
                 <button
                   type="button"
+                  onClick={() => {
+                    const summary = clusterSummaries.find((s) => s.clusterId === view.selectedClusterId);
+                    if (summary) enterScope(summary.members, summary.label);
+                  }}
+                  title="このクラスタだけを全キャンバスに展開して軸分離する"
+                >
+                  このクラスタにズーム
+                </button>{" "}
+                <button
+                  type="button"
                   onClick={() => explainCluster(view.selectedClusterId as string)}
                   disabled={explaining || !chatEndpoint.baseUrl}
                   title={chatEndpoint.baseUrl ? "" : "設定画面でチャットプロバイダを設定すると使えます"}
@@ -664,10 +842,10 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   </h3>
                   <p className="cluster-value">{summary.size} 件</p>
                   <p className="cluster-takeaway">
-                    {records &&
+                    {activeRecords &&
                       summary.representatives
                         .slice(0, 2)
-                        .map((i) => records[i].claimText)
+                        .map((i) => activeRecords[i].claimText)
                         .join(" / ")}
                   </p>
                 </button>
