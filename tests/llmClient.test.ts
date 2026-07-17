@@ -150,6 +150,64 @@ describe("reasoning effort と追加ヘッダ", () => {
     expect(bodies[1]).not.toContain("reasoning_effort");
   });
 
+  it("serviceTier=flex は service_tier として送られ、Flex 用の長いタイムアウトになる", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: テスト用
+    let sentBody: any;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return okResponse("ok");
+      }),
+    );
+    await requestChat({ ...endpoint, serviceTier: "flex" }, { messages: [{ role: "user", content: "hi" }] });
+    expect(sentBody.service_tier).toBe("flex");
+  });
+
+  it("OpenRouter の serviceTier はモデルサフィックスになる", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: テスト用
+    let sentBody: any;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        sentBody = JSON.parse(String(init?.body));
+        return okResponse("ok");
+      }),
+    );
+    await requestChat(
+      { baseUrl: "https://openrouter.ai/api/v1", apiKey: "k", model: "m", serviceTier: "floor" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+    expect(sentBody.model).toBe("m:floor");
+    expect(sentBody.service_tier).toBeUndefined();
+  });
+
+  it("format 起因の 400 ではオプションパラメータは次の format で復活する", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = String(init?.body);
+        bodies.push(body);
+        // json_schema は(reasoning の有無に関わらず)拒否、json_object は成功
+        if (body.includes("json_schema")) return new Response("format unsupported", { status: 400 });
+        return okResponse("{}");
+      }),
+    );
+    await requestChat(
+      { ...endpoint, reasoningEffort: "low" },
+      { messages: [{ role: "user", content: "hi" }], jsonSchema: schema },
+    );
+    // json_schema+reasoning → json_schema(reasoningなし) → json_object+reasoning(復活) の順
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0]).toContain("json_schema");
+    expect(bodies[0]).toContain("reasoning_effort");
+    expect(bodies[1]).toContain("json_schema");
+    expect(bodies[1]).not.toContain("reasoning_effort");
+    expect(bodies[2]).toContain("json_object");
+    expect(bodies[2]).toContain("reasoning_effort");
+  });
+
   it("extraHeaders が送信される(Anthropic ブラウザ直アクセス等)", async () => {
     let sentHeaders: Record<string, string> = {};
     vi.stubGlobal(

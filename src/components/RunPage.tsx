@@ -118,7 +118,11 @@ export function RunPage({ projectId }: { projectId: string }) {
           </span>
           {(() => {
             const usage = isRunning ? runner.usage : project.tokenUsage;
-            const cost = actualCostUsd(usage, project.settingsSnapshot.chat.model);
+            const cost = actualCostUsd(
+              usage,
+              project.settingsSnapshot.chat.model,
+              project.settingsSnapshot.chat.serviceTier,
+            );
             return cost !== null && usage.total > 0 ? (
               <span>
                 概算費用: <b>${cost.toFixed(3)}</b>
@@ -137,7 +141,11 @@ export function RunPage({ projectId }: { projectId: string }) {
             ✅ レポート作成完了 — 実績 入力 {project.tokenUsage.input.toLocaleString()} / 出力{" "}
             {project.tokenUsage.output.toLocaleString()} トークン
             {(() => {
-              const cost = actualCostUsd(project.tokenUsage, project.settingsSnapshot.chat.model);
+              const cost = actualCostUsd(
+                project.tokenUsage,
+                project.settingsSnapshot.chat.model,
+                project.settingsSnapshot.chat.serviceTier,
+              );
               return cost !== null ? ` ≈ $${cost.toFixed(3)}` : "";
             })()}
           </p>

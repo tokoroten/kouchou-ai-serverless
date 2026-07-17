@@ -8,6 +8,20 @@ import { PRESETS, type PresetId, isProviderConfigured, resolveEndpoint } from ".
 // 2. chat / embedding スロットは「設定済みプロバイダ」からのみ選択可能
 // 3. 疎通確認: モデル一覧取得 / 埋め込み1件 / チャット応答テスト(タイムアウト検知)
 
+/**
+ * /models の結果をスロットに合うものだけに絞る。
+ * embedding スロット: 埋め込みモデルらしい ID のみ(embed / bge / e5 / minilm / gte)
+ * chat スロット: 音声・画像・埋め込み等の明らかにチャットでないモデルを除外
+ */
+export function filterModelsForSlot(ids: string[], slot: "chat" | "embedding"): string[] {
+  if (slot === "embedding") {
+    return ids.filter((id) => /embed|bge|(^|[/-])e5-|minilm|gte-/i.test(id));
+  }
+  return ids.filter(
+    (id) => !/embed|whisper|tts|audio|realtime|dall-e|image|moderation|transcribe|similarity|rerank|clip/i.test(id),
+  );
+}
+
 const KEY_REQUIRED: PresetId[] = ["openai", "anthropic", "grok", "openrouter", "azure", "bedrock"];
 const URL_EDITABLE: PresetId[] = ["azure", "bedrock", "lmstudio", "ollama", "custom"];
 const LOCAL_PROVIDERS: PresetId[] = ["gemini-nano", "local-embedding"];
@@ -160,7 +174,12 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
         extraHeaders: selected?.extraHeaders,
       });
       if (seq !== fetchSeqRef.current) return; // 別プロバイダに切り替え済み
-      setModels(list.map((m) => m.id));
+      setModels(
+        filterModelsForSlot(
+          list.map((m) => m.id),
+          slot,
+        ),
+      );
       setFetchedPrices(new Map(list.filter((m) => m.price).map((m) => [m.id, m.price as string])));
     } catch {
       // 標準リストのみ
@@ -169,7 +188,7 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
 
   // チャット応答テスト: 小リクエストを投げてレイテンシ計測(30秒でタイムアウト検知)。
   // 実際に送った入力とモデルの出力をそのまま表示する。
-  const [probeIo, setProbeIo] = useState<{ input: string; output: string } | null>(null);
+  const [probeIo, setProbeIo] = useState<{ input: string; output: string; reasoning?: string } | null>(null);
   const probeResponse = async () => {
     setTesting(true);
     setProbeIo(null);
@@ -177,7 +196,7 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
     try {
       const result = await probeChat(endpoint, 30_000);
       setTestResult(result.ok ? `✅ ${result.message}` : `❌ ${result.message}`);
-      setProbeIo({ input: result.input, output: result.output || "(応答なし)" });
+      setProbeIo({ input: result.input, output: result.output || "(応答なし)", reasoning: result.reasoning });
     } finally {
       setTesting(false);
     }
@@ -189,7 +208,10 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
     setTestResult(null);
     try {
       const all = await listModelsDetailed(endpoint);
-      const free = all.filter((m) => m.isFree).map((m) => m.id);
+      const free = filterModelsForSlot(
+        all.filter((m) => m.isFree).map((m) => m.id),
+        slot,
+      );
       if (free.length === 0) {
         setTestResult("無償モデルが見つかりませんでした。");
       } else {
@@ -217,7 +239,7 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
         return;
       }
       const list = await listModels(endpoint);
-      setModels(list);
+      setModels(filterModelsForSlot(list, slot));
       let message = `接続成功: ${list.length} モデル`;
       if (slot === "embedding" && endpoint.model) {
         const vectors = await requestEmbeddings(endpoint, { texts: ["テスト"] });
@@ -238,7 +260,20 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
         <p className="note">選択可能なプロバイダがありません。上で API キーを設定してください。</p>
       ) : (
         <>
-          <label>プロバイダ</label>
+          <label>
+            プロバイダ
+            {preset?.statusUrl && (
+              <a
+                href={preset.statusUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontWeight: 400, marginLeft: 8, fontSize: "0.85rem" }}
+                title="プロバイダの稼働状況ページを開く"
+              >
+                稼働状況 ↗
+              </a>
+            )}
+          </label>
           <select
             value={selection.provider ?? ""}
             onChange={(e) => {
@@ -248,6 +283,7 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
                 provider: id,
                 model: selected ? (slot === "chat" ? selected.chatModel : selected.embeddingModel) : "",
                 reasoningEffort: "", // 前プロバイダの設定を持ち越さない
+                serviceTier: "",
               });
               setModels([]);
               setFetchedPrices(new Map());
@@ -302,6 +338,21 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
                   選択中: {selection.model} — {priceOf(selection.model)} (USD/100万トークン)
                 </p>
               )}
+              {slot === "chat" && preset?.tierOptions && (
+                <>
+                  <label>処理ティア / ルーティング</label>
+                  <select
+                    value={selection.serviceTier ?? ""}
+                    onChange={(e) => setSlot({ serviceTier: e.target.value })}
+                  >
+                    {preset.tierOptions.map((tier) => (
+                      <option key={tier.value} value={tier.value}>
+                        {tier.label}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               {slot === "chat" && selection.provider !== "gemini-nano" && (
                 <>
                   <label>reasoning effort(対応モデルのみ。非対応なら自動で外して再試行します)</label>
@@ -342,6 +393,14 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
               <div>
                 <b>入力:</b> <span>{probeIo.input}</span>
               </div>
+              {probeIo.reasoning && (
+                <div>
+                  <b>思考 (reasoning):</b>{" "}
+                  <span style={{ whiteSpace: "pre-wrap", opacity: 0.75 }}>
+                    {probeIo.reasoning.length > 600 ? `${probeIo.reasoning.slice(0, 600)}…` : probeIo.reasoning}
+                  </span>
+                </div>
+              )}
               <div>
                 <b>出力:</b> <span style={{ whiteSpace: "pre-wrap" }}>{probeIo.output}</span>
               </div>

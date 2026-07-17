@@ -28,7 +28,9 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   };
 
   const cost =
-    report.tokenUsage && report.chatModel ? estimateActualCostUsd(report.tokenUsage, report.chatModel) : null;
+    report.tokenUsage && report.chatModel
+      ? estimateActualCostUsd(report.tokenUsage, report.chatModel, report.serviceTier)
+      : null;
 
   return (
     <div>

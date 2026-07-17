@@ -130,6 +130,7 @@ export const useRunner = create<RunnerStore>((set, get) => ({
         result,
         tokenUsage: latestProject?.tokenUsage ?? get().usage,
         chatModel: project.settingsSnapshot.chat.model,
+        serviceTier: project.settingsSnapshot.chat.serviceTier ?? "",
       });
       await db.projects.update(project.id, { status: "done", reportId, currentStep: null });
       set({ runningProjectId: null, currentStep: null });

@@ -10,6 +10,9 @@ export type EndpointConfig = {
   extraHeaders?: Record<string, string>;
   /** reasoning effort(対応モデルのみ)。空なら送信しない */
   reasoningEffort?: "" | "minimal" | "low" | "medium" | "high";
+  /** 処理ティア/ルーティング(プロバイダ別)。空なら送信しない。
+   * OpenAI: "flex"(Batch 価格・低速) / Anthropic: "standard_only" / OpenRouter: "floor"・"nitro"(モデルサフィックス) */
+  serviceTier?: string;
 };
 
 // プロバイダごとの接続情報。API キーはプロバイダ単位で一度だけ入力し、
@@ -24,6 +27,8 @@ export type SlotSelection = {
   model: string;
   /** reasoning effort(chat スロットのみ・対応モデルのみ)。空なら送信しない */
   reasoningEffort?: "" | "minimal" | "low" | "medium" | "high";
+  /** 処理ティア/ルーティング(chat スロットのみ、プロバイダ別) */
+  serviceTier?: string;
 };
 
 export type Settings = {
@@ -53,6 +58,7 @@ export function resolveEndpoint(settings: Settings, slot: "chat" | "embedding"):
     authHeader: preset?.authHeader ?? "bearer",
     extraHeaders: preset?.extraHeaders,
     reasoningEffort: slot === "chat" ? (selection.reasoningEffort ?? "") : "",
+    serviceTier: slot === "chat" ? (selection.serviceTier ?? "") : "",
   };
 }
 
@@ -73,10 +79,16 @@ export function lookupModelPrice(modelId: string): { input: number; output: numb
 
 /** 実績トークンからの概算費用(チャットモデル単価ベース。単価不明なら null)。
  * 入力トークンにはチャットと埋め込みが混ざるため、上限寄りの概算になる。 */
-export function estimateActualCostUsd(usage: { input: number; output: number }, chatModel: string): number | null {
+export function estimateActualCostUsd(
+  usage: { input: number; output: number },
+  chatModel: string,
+  serviceTier?: string,
+): number | null {
   const price = lookupModelPrice(chatModel);
   if (!price) return null;
-  return (usage.input / 1e6) * price.input + (usage.output / 1e6) * price.output;
+  const cost = (usage.input / 1e6) * price.input + (usage.output / 1e6) * price.output;
+  // Flex は Batch API 価格(約50%割引)
+  return serviceTier === "flex" ? cost * 0.5 : cost;
 }
 
 /** プロバイダが「設定済み」か(選択可能にするかどうか) */
@@ -128,6 +140,10 @@ export type Preset = {
   /** 標準モデルリスト(接続テスト前でも選べるようにする)。安い順に並べる */
   knownChatModels?: ModelSuggestion[];
   knownEmbeddingModels?: ModelSuggestion[];
+  /** 処理ティア/ルーティングの選択肢(chat スロット)。無いプロバイダは省略 */
+  tierOptions?: { value: string; label: string }[];
+  /** プロバイダの稼働状況ページ */
+  statusUrl?: string;
 };
 
 export type ModelSuggestion = {
@@ -141,6 +157,7 @@ export const PRESETS: Preset[] = [
   // 意見分割・ラベリング・要約は比較的軽いタスクなので、安価な小型モデルで十分。
   {
     id: "openai",
+    statusUrl: "https://status.openai.com",
     label: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     chatModel: "gpt-5.4-nano",
@@ -161,9 +178,14 @@ export const PRESETS: Preset[] = [
       { id: "text-embedding-3-small", price: "$0.02" },
       { id: "text-embedding-3-large", price: "$0.13" },
     ],
+    tierOptions: [
+      { value: "", label: "標準(即時処理)" },
+      { value: "flex", label: "Flex — Batch 価格(約50%割引)・低速。混雑時は自動リトライ" },
+    ],
   },
   {
     id: "anthropic",
+    statusUrl: "https://status.anthropic.com",
     label: "Anthropic (Claude)",
     baseUrl: "https://api.anthropic.com/v1",
     chatModel: "claude-haiku-4-5",
@@ -179,9 +201,14 @@ export const PRESETS: Preset[] = [
       { id: "claude-sonnet-4-6", price: "$3.00 / $15.00" },
       { id: "claude-opus-4-8", price: "$5.00 / $25.00" },
     ],
+    tierOptions: [
+      { value: "", label: "auto(既定。Priority Tier 契約があれば優先枠を使用)" },
+      { value: "standard_only", label: "standard_only — Priority Tier 枠を消費しない" },
+    ],
   },
   {
     id: "grok",
+    statusUrl: "https://status.x.ai",
     label: "Grok (xAI)",
     baseUrl: "https://api.x.ai/v1",
     chatModel: "grok-4.3",
@@ -197,6 +224,7 @@ export const PRESETS: Preset[] = [
   },
   {
     id: "openrouter",
+    statusUrl: "https://status.openrouter.ai",
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     chatModel: "openai/gpt-5.4-nano",
@@ -214,9 +242,15 @@ export const PRESETS: Preset[] = [
       { id: "anthropic/claude-haiku-4.5", price: "$1.00 / $5.00" },
       { id: "x-ai/grok-4.3", price: "$1.25 / $2.50" },
     ],
+    tierOptions: [
+      { value: "", label: "標準ルーティング" },
+      { value: "floor", label: ":floor — 常に最安のプロバイダを選択" },
+      { value: "nitro", label: ":nitro — 最速(スループット順)のプロバイダを選択" },
+    ],
   },
   {
     id: "azure",
+    statusUrl: "https://azure.status.microsoft",
     label: "Azure OpenAI",
     baseUrl: "",
     chatModel: "",
@@ -227,6 +261,7 @@ export const PRESETS: Preset[] = [
   },
   {
     id: "bedrock",
+    statusUrl: "https://health.aws.amazon.com/health/status",
     label: "AWS Bedrock (OpenAI互換)",
     baseUrl: "",
     chatModel: "",

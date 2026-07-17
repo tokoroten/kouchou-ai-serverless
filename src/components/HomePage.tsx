@@ -179,7 +179,7 @@ export function HomePage() {
               {report.tokenUsage &&
                 report.chatModel &&
                 (() => {
-                  const cost = estimateActualCostUsd(report.tokenUsage, report.chatModel);
+                  const cost = estimateActualCostUsd(report.tokenUsage, report.chatModel, report.serviceTier);
                   return cost !== null ? ` / コスト ≈ $${cost.toFixed(3)}` : "";
                 })()}
             </p>

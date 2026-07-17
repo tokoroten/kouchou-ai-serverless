@@ -39,6 +39,8 @@ export type ReportRow = {
   tokenUsage?: { input: number; output: number; total: number };
   /** 生成に使ったチャットモデル(コスト概算用) */
   chatModel?: string;
+  /** 生成時の処理ティア(flex は約50%割引でコスト概算に反映) */
+  serviceTier?: string;
 };
 
 export const db = new Dexie("kouchou-ai-serverless") as Dexie & {
