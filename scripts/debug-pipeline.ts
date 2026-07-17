@@ -198,7 +198,8 @@ async function main() {
   if (result.comment_num !== comments.length) errors.push("comment_num 不一致");
   const attrCount = result.arguments.filter((a) => a.attributes).length;
 
-  writeFileSync("scratch-debug-result.json", JSON.stringify(result, null, 2));
+  mkdirSync("testdata", { recursive: true });
+  writeFileSync("testdata/debug-result.json", JSON.stringify(result, null, 2));
   console.log("\n=== 結果 ===");
   console.log(`所要: ${elapsed}s / args: ${result.arguments.length} / clusters: ${result.clusters.length}`);
   console.log(`クラスタ数構成: ${JSON.stringify(result.config.hierarchical_clustering.cluster_nums)}`);
@@ -214,7 +215,7 @@ async function main() {
     for (const e of errors.slice(0, 10)) console.error(`  - ${e}`);
     process.exit(1);
   }
-  console.log("\n検証 OK ✅ (scratch-debug-result.json に保存)");
+  console.log("\n検証 OK ✅ (testdata/debug-result.json に保存)");
 }
 
 main().catch((e) => {

@@ -9,6 +9,8 @@ public/viewer.html
 coverage/
 *.local
 .DS_Store
-scratch-debug-result.json
+*.tsbuildinfo
+
+# デバッグの一時出力(スクリプトは testdata/ に書く)
 testdata/
-scratch-2000-run.log
+scratch-*
