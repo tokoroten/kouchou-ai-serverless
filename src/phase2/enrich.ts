@@ -59,10 +59,15 @@ async function enrichOne(arg: ExtractedArgument, ctx: PipelineContext): Promise<
   return enrichment;
 }
 
-/** LLM 出力を検証・正規化する(壊れた値は安全側に落とす) */
+/** LLM 出力(文字列)を検証・正規化する(壊れた値は安全側に落とす) */
 export function parseEnrichment(response: string): OpinionEnrichment {
   const obj = parseJsonObjectLoose(response);
   if (!obj) return fallbackEnrichment();
+  return normalizeEnrichment(obj);
+}
+
+/** パース済みオブジェクトを OpinionEnrichment に正規化する(結合抽出でも再利用) */
+export function normalizeEnrichment(obj: Record<string, unknown>): OpinionEnrichment {
   return {
     target: typeof obj.target === "string" && obj.target ? obj.target : null,
     topics: parseTags(obj.topics),
@@ -101,7 +106,7 @@ export function normalizeStance(raw: Record<string, unknown> | undefined): Stanc
   return stance;
 }
 
-function fallbackEnrichment(): OpinionEnrichment {
+export function fallbackEnrichment(): OpinionEnrichment {
   return {
     target: null,
     topics: [],

@@ -56,7 +56,7 @@ export function ViewerPage({ reportId }: { reportId: string }) {
         </button>
         {project && (
           <button type="button" onClick={() => navigate(`/interactive/${project.id}`)}>
-            リアルタイムモードで再クラスタリング
+            クラスタリングを再実行
           </button>
         )}
       </div>

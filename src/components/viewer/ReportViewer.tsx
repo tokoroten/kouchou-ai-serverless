@@ -29,7 +29,7 @@ export function ReportViewer({ result }: Props) {
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterParams>(EMPTY_FILTER);
   const [showLabels, setShowLabels] = useState(true);
-  const [showHull, setShowHull] = useState(false);
+  const [showHull, setShowHull] = useState(true);
 
   const levels = useMemo(
     () => [...new Set(result.clusters.filter((c) => c.level > 0).map((c) => c.level))].sort((a, b) => a - b),

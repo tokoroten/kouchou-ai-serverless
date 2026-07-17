@@ -1,38 +1,51 @@
 import type { PipelineContext } from "../lib/pipeline/context";
-import type { EmbeddingResult, ExtractionResult } from "../types/project";
+import { embedding } from "../lib/pipeline/steps/embedding";
+import type { CommentRow, EmbeddingResult } from "../types/project";
 import { assignTagVector, buildCodebook } from "./codebook";
-import { enrichArguments } from "./enrich";
+import { extractAndEnrich } from "./extractEnrich";
 import type { EdgeSet } from "./graph";
 import type { Codebook, OpinionRecord } from "./types";
 
-// フェーズ2のデータ準備(前処理済みデータ → OpinionRecord[] + Codebook + 候補辺)。
-// すべてチェックポイント付き: enrich は意見単位、コードブックと辺は全体で1チャンク。
+// フェーズ2のデータ準備(生コメント → OpinionRecord[] + Codebook + 埋め込み + 候補辺)。
+// 次世代版は通常版の extraction/embedding には依存せず、専用の投入口で
+// 「意見抽出 + 構造化属性付与」を1コールにまとめ、意見文を独自に埋め込む。
+// すべてチェックポイント付き: 抽出は phase2-extract(コメント単位)、埋め込みはバッチ単位、
+// コードブックと辺は全体で1チャンク。
 
 export type Phase2Data = {
   records: OpinionRecord[];
   codebook: Codebook;
+  embedding: EmbeddingResult;
 };
 
 export type Phase2Status = (message: string, done?: number, total?: number) => void;
 
 export async function preparePhase2Records(
-  extraction: ExtractionResult,
+  comments: CommentRow[],
+  extractionPrompt: string,
   ctx: PipelineContext,
   onStatus?: Phase2Status,
 ): Promise<Phase2Data> {
-  // 1パス目: 構造化抽出(自由生成タグ)
-  onStatus?.("構造化抽出(stance/topics/reasons)...", 0, extraction.args.length);
-  const enrichments = await enrichArguments(extraction.args, ctx, (done, total) =>
-    onStatus?.("構造化抽出(stance/topics/reasons)...", done, total),
+  // 1. 結合抽出: 生コメント → 意見(argument) + 構造化属性(stance/topics/reasons 等)
+  onStatus?.("意見抽出 + 構造化属性付与...", 0, comments.length);
+  const { args, relations, enrichments } = await extractAndEnrich(comments, extractionPrompt, ctx, (done, total) =>
+    onStatus?.("意見抽出 + 構造化属性付与...", done, total),
   );
 
-  // コードブック統合(2パス方式)
+  // 2. 意見文の埋め込み(通常版とは独立。phase2 隔離チェックポイントに保存)
+  onStatus?.("意見のベクトル化...", 0, args.length);
+  const embeddingResult = await embedding(args, {
+    ...ctx,
+    onProgress: (event) => onStatus?.("意見のベクトル化...", event.done, event.total),
+  });
+
+  // 3. コードブック統合(2パス方式)
   onStatus?.("タグのコードブック統合...");
   const codebook = await buildCodebook(enrichments, ctx);
 
-  // 2パス目: コードブックへの割当(疎ベクトル化)
-  const argIdToCommentId = new Map(extraction.relations.map((r) => [r.argId, r.commentId]));
-  const records: OpinionRecord[] = extraction.args.map((arg, i) => ({
+  // 4. コードブックへの割当(疎ベクトル化)して OpinionRecord を組む
+  const argIdToCommentId = new Map(relations.map((r) => [r.argId, r.commentId]));
+  const records: OpinionRecord[] = args.map((arg, i) => ({
     id: arg.argId,
     originalCommentId: argIdToCommentId.get(arg.argId) ?? "",
     claimText: arg.argument,
@@ -40,7 +53,7 @@ export async function preparePhase2Records(
     topicVector: assignTagVector(enrichments[i].topics, codebook.topicIndex),
     reasonVector: assignTagVector(enrichments[i].reasons, codebook.reasonIndex),
   }));
-  return { records, codebook };
+  return { records, codebook, embedding: embeddingResult };
 }
 
 /** 候補辺の構築(Worker)。IndexedDB にキャッシュする。 */

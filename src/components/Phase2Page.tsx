@@ -5,18 +5,18 @@ import { fnv1a } from "../lib/pipeline/clusterTable";
 import type { PipelineContext } from "../lib/pipeline/context";
 import { navigate } from "../lib/router";
 import { dexieCheckpoints } from "../lib/storage/checkpoints";
-import { db } from "../lib/storage/db";
+import { db, deletePhase2ProjectData } from "../lib/storage/db";
 import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
 import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
 import { type EdgeSet, clusterByLayout, clusterByLouvain, computeEdgeWeights, subsetEdges } from "../phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
 import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
-import { deserializeSample } from "../phase2/sample";
+import { deserializeSample, serializeSample } from "../phase2/sample";
 import type { ClusterView, Codebook, OpinionRecord } from "../phase2/types";
 import { DEFAULT_VIEW, dominantStance, stanceScore } from "../phase2/types";
 import { useSettings } from "../store/settings";
-import type { EmbeddingResult, ExtractionResult } from "../types/project";
-import { resolveEndpoint } from "../types/settings";
+import type { EmbeddingResult } from "../types/project";
+import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
@@ -24,7 +24,7 @@ import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 // フェーズ2: インタラクティブ再クラスタリング(次世代版)。
 // - クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」
 // - スライダー操作では候補辺の再重み付けのみ(LLM は呼ばない)
-// - stance/reason はレビュー必須修正どおり focus+context(選択クラスタ内)でのみ有効
+// - stance/reason は全体ビューでも使える(トピック類似度でゲート)。選択/絞り込み中はゲートを外す
 // - 属性軸: 数値属性は範囲正規化距離で分離強度を調整、カテゴリカルは色分け+δ一致
 // - projectId === "sample" のときは事前分析済みサンプルを読み込む(LLM 不要)
 
@@ -33,22 +33,14 @@ type Coords = { x: Float32Array; y: Float32Array };
 export function Phase2Page({ projectId }: { projectId: string }) {
   const isSample = projectId === "sample";
   const project = useLiveQuery(() => (isSample ? undefined : db.projects.get(projectId)), [projectId, isSample]);
-  const preprocessed = useLiveQuery(
-    async () => {
-      if (isSample) return { ext: undefined, emb: undefined };
-      const ext = (await db.stepResults.get([projectId, "extraction"]))?.data as ExtractionResult | undefined;
-      const emb = (await db.stepResults.get([projectId, "embedding"]))?.data as EmbeddingResult | undefined;
-      return { ext, emb };
-    },
-    [projectId, isSample],
-    { ext: undefined, emb: undefined },
-  );
   const { settings } = useSettings();
 
   const [title, setTitle] = useState<string>("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // データ準備で消費した累計トークン(意見抽出+enrich+コードブック+埋め込み)
+  const [usage, setUsage] = useState({ input: 0, output: 0, total: 0 });
   const [records, setRecords] = useState<OpinionRecord[] | null>(null);
   const [codebook, setCodebook] = useState<Codebook | null>(null);
   const [edges, setEdges] = useState<EdgeSet | null>(null);
@@ -56,15 +48,17 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const [view, setView] = useState<ClusterView>(DEFAULT_VIEW);
   const [assignment, setAssignment] = useState<TrackedAssignment | null>(null);
   const [colorMode, setColorMode] = useState<"cluster" | "attribute">("cluster");
-  // 凸包は既定オフ(通常版ビューアと同じ)。グラフクラスタは全体ビューでは空間的に
-  // 重なりやすく、「見た目で切り直す」後やドリルダウン時に有用
-  const [showHull, setShowHull] = useState(false);
+  // 凸包(クラスタのなわばり)は既定オン。グラフクラスタは全体ビューでは空間的に
+  // 重なりやすく、なわばりを見せた方がクラスタの範囲を掴みやすい
+  const [showHull, setShowHull] = useState(true);
   // トピック絞り込み(ドリルダウン)。indices はグローバルインデックス。
   // 混在したままの全体 UMAP ではなく、トピックを選んでから全キャンバスで軸分離する
   const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
   const [explanation, setExplanation] = useState<{ clusterId: string; text: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
   const [savedViews, setSavedViews] = useState<ClusterView[]>([]);
+  // レイアウトが動くたびに「見た目で切り直す」を自動実行するか(既定オン)
+  const [autoLayoutCluster, setAutoLayoutCluster] = useState(true);
 
   const layoutWorkerRef = useRef<Worker | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -73,6 +67,8 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const attrSimCacheRef = useRef<Map<string, Float32Array>>(new Map());
   // 全体ビューの座標スナップショット(ドリルダウンから戻るときの復元用)
   const globalCoordsRef = useRef<Coords | null>(null);
+  // 「見た目で切り直す」自動実行のスロットル(毎フレーム Louvain は重いため)
+  const autoReclusterAtRef = useRef(0);
 
   // スコープ適用後のレコードと辺(ドリルダウン中は部分集合)
   const activeRecords = useMemo(
@@ -94,7 +90,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     [isSample, project, settings],
   );
 
-  const checkpointsId = isSample ? "phase2-sample" : projectId;
+  // 次世代版は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
+  // チェックポイントも通常版(projectId)と衝突しない専用 namespace に隔離する。
+  const checkpointsId = isSample ? "phase2-sample" : `${projectId}-phase2`;
 
   const buildCtx = useCallback((): PipelineContext | null => {
     if (!isSample && !project) return null;
@@ -105,6 +103,12 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       concurrency: project?.settingsSnapshot.concurrency ?? 8,
       signal: abortRef.current.signal,
       checkpoints: dexieCheckpoints(checkpointsId),
+      onUsage: (u) =>
+        setUsage((prev) => ({
+          input: prev.input + u.input,
+          output: prev.output + u.output,
+          total: prev.total + u.total,
+        })),
     };
   }, [isSample, project, chatEndpoint, settings, checkpointsId]);
 
@@ -130,17 +134,21 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     })();
   }, [isSample, records]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- データ準備(enrich → codebook → 候補辺 → 初期座標) ----
+  // ---- データ準備(結合抽出 → 埋め込み → codebook → 候補辺 → 初期座標) ----
   const prepare = async () => {
     const ctx = buildCtx();
-    const ext = preprocessed?.ext;
-    const emb = preprocessed?.emb;
-    if (!ctx || !ext || !emb || !project) return;
+    if (!ctx || !project) return;
     setPreparing(true);
     setError(null);
+    setUsage({ input: 0, output: 0, total: 0 });
     try {
       const attributesByComment = new Map(project.comments.map((c) => [c.commentId, c.attributes]));
-      const { records: recs, codebook: cb } = await preparePhase2Records(ext, ctx, (message, done, total) =>
+      // 生コメントから phase2 専用の投入口で「意見抽出 + 構造化属性 + 埋め込み」をまとめて実行
+      const {
+        records: recs,
+        codebook: cb,
+        embedding: emb,
+      } = await preparePhase2Records(project.comments, project.prompts.extraction, ctx, (message, done, total) =>
         setStatus(total ? `${message} ${done}/${total}` : message),
       );
       for (const record of recs) {
@@ -153,17 +161,17 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       );
       setEdges(edgeSet);
 
-      // 初期座標: 通常版の UMAP チェックポイントを再利用。無ければ計算
+      // 初期座標: phase2 隔離チェックポイントにキャッシュ(再実行時はスキップ)
       const { umapCheckpointKey } = await import("../lib/pipeline/steps/clustering");
       const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, seed: "kouchou-ai" });
-      const saved: Coords | undefined = await dexieCheckpoints(projectId).getChunk("umap", key);
+      const saved: Coords | undefined = await dexieCheckpoints(checkpointsId).getChunk("umap", key);
       let initial: Coords;
       if (saved) {
         initial = saved;
       } else {
         setStatus("初期レイアウト計算(UMAP)...");
         initial = await runUmapOnce(emb, (done, total) => setStatus(`初期レイアウト計算(UMAP)${done}/${total}`));
-        await dexieCheckpoints(projectId).putChunk("umap", key, initial);
+        await dexieCheckpoints(checkpointsId).putChunk("umap", key, initial);
       }
       setCoords({ x: initial.x.slice(), y: initial.y.slice() });
       startLayout(initial, recs, edgeSet);
@@ -306,6 +314,18 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     const communities = clusterByLayout(current.x, current.y, view.resolution);
     setAssignment(trackClusters(communities, assignmentRef.current));
   };
+
+  // 「見た目で切り直す」の自動実行: レイアウト座標が更新されるたびに(スロットルして)
+  // 現在の 2D 配置でクラスタを切り直す。トグルオフで従来どおり手動のみ。
+  useEffect(() => {
+    if (!autoLayoutCluster || !coords || !activeRecords) return;
+    if (coords.x.length !== activeRecords.length) return;
+    const now = performance.now();
+    if (now - autoReclusterAtRef.current < 350) return;
+    autoReclusterAtRef.current = now;
+    const communities = clusterByLayout(coords.x, coords.y, view.resolution);
+    setAssignment(trackClusters(communities, assignmentRef.current));
+  }, [coords, autoLayoutCluster, activeRecords, view.resolution]);
 
   // ---- トピック絞り込み(ドリルダウン) ----
   const coordsRef = useRef<Coords | null>(null);
@@ -557,10 +577,17 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   // ---- クラスタ選択(focus+context) ----
   const selectCluster = (clusterId: string | null) => {
     setExplanation(null);
-    updateView({
-      selectedClusterId: clusterId,
-      ...(clusterId === null ? { stanceWeight: 0, reasonWeight: 0 } : {}),
-    });
+    // スタンス/理由が効いているときだけ、選択で辺の重みが変わる(focus+context)ため
+    // 再クラスタリング=レイアウト再加熱を行う。効いていないときは選択ハイライトのみで、
+    // レイアウト(UMAP)は動かさない(無駄な再実行を避ける)。
+    if (view.stanceWeight > 0 || view.reasonWeight > 0) {
+      updateView({
+        selectedClusterId: clusterId,
+        ...(clusterId === null ? { stanceWeight: 0, reasonWeight: 0 } : {}),
+      });
+    } else {
+      setView((v) => ({ ...v, selectedClusterId: clusterId }));
+    }
   };
 
   // ---- LLM 解説(オンデマンド・構成ハッシュでキャッシュ) ----
@@ -615,6 +642,26 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       });
   }, [checkpointsId]);
 
+  // 現在の分析データ(意見・タグ・コードブック・候補グラフ・全体座標)を JSON で保存する。
+  // 形式は事前分析済みサンプル(sample-phase2.json)と同一。
+  const downloadJson = () => {
+    if (!records || !codebook || !edges) return;
+    const coordsForExport = scope ? globalCoordsRef.current : coords;
+    if (!coordsForExport || coordsForExport.x.length !== records.length) {
+      setError("JSON 保存には全体ビューの座標が必要です。ドリルダウンを解除してから実行してください。");
+      return;
+    }
+    const name = (isSample ? title : project?.title) || "phase2";
+    const sample = serializeSample(name, records, codebook, edges, coordsForExport);
+    const blob = new Blob([JSON.stringify(sample)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.phase2.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const saveCurrentView = async () => {
     const name = prompt("ビュー名を入力してください", view.name);
     if (!name) return;
@@ -624,39 +671,58 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   };
 
   if (!isSample && !project) return <p>読み込み中...</p>;
-  const hasPreprocess = isSample || !!(preprocessed?.ext && preprocessed?.emb);
+  const commentCount = project?.comments.length ?? 0;
   const ready = !!(records && edges && coords);
   const selectedAttrInfo = attributeInfos.find((a) => a.key === view.attributeKey);
+
+  // 累計トークン → コスト概算(チャットモデル単価ベース。ローカル実行や単価不明は費用非表示)
+  const usageCost = (() => {
+    if (usage.total === 0) return null;
+    if (chatEndpoint.baseUrl.startsWith("local:")) return "ローカル実行のため費用は 0";
+    const cost = estimateActualCostUsd(usage, chatEndpoint.model, chatEndpoint.serviceTier);
+    return cost !== null ? `コスト ≈ $${cost.toFixed(3)}` : "単価不明のモデル(トークン数のみ表示)";
+  })();
 
   return (
     <div>
       <h1>{isSample ? title || "サンプル" : project?.title} — 次世代版</h1>
       <p className="note">
         クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」です。スライダー操作は LLM
-        を呼ばず、候補グラフの再重み付けだけで点群が連続的に再編されます。スタンス/理由の重みは、
-        クラスタを選択したときにそのクラスタ内だけに適用されます(focus+context)。 詳しい仕組みは{" "}
-        <a href="#/phase2/about">アルゴリズム解説</a> へ。
+        を呼ばず、候補グラフの再重み付けだけで点群が連続的に再編されます。スタンス/理由は全体ビューでも
+        使えます(トピック類似度でゲートし、無関係な話題を賛否で混ぜません)。クラスタを選択・トピックで
+        絞ると、その範囲にそのまま効きます。 詳しい仕組みは <a href="#/phase2/about">アルゴリズム解説</a> へ。
       </p>
       {error && <div className="error-box">{error}</div>}
 
-      {!hasPreprocess && (
+      {usage.total > 0 && (
+        <p className="note">
+          累計トークン: 入力 {usage.input.toLocaleString()} / 出力 {usage.output.toLocaleString()} / 合計{" "}
+          {usage.total.toLocaleString()}
+          {usageCost ? ` — ${usageCost}` : ""}
+          {preparing ? "(処理中...)" : ""}
+        </p>
+      )}
+
+      {!ready && !isSample && commentCount === 0 && (
         <div className="card">
-          <p>前処理(意見抽出+ベクトル化)がまだありません。先に通常版の実行画面で前処理を済ませてください。</p>
-          <button type="button" className="primary" onClick={() => navigate(`/run/${projectId}`)}>
-            実行画面へ
+          <p>コメントデータがありません。先にプロジェクトを作成してデータを取り込んでください。</p>
+          <button type="button" className="primary" onClick={() => navigate("/")}>
+            ホームへ
           </button>
         </div>
       )}
 
-      {hasPreprocess && !ready && !isSample && (
+      {!ready && !isSample && commentCount > 0 && (
         <div className="card">
           <p>
-            フェーズ2のデータ準備を行います: 構造化抽出(意見 {preprocessed?.ext?.args.length.toLocaleString()} 件 ×
-            チャット1回) → タグ統合 → 候補グラフ構築。
+            次世代版のデータ準備を行います(通常版とは独立した専用の投入口)。
+            {commentCount.toLocaleString()} 件のコメントごとにチャット1回で「意見抽出 +
+            構造化属性(stance/topics/reasons)」を まとめて取得 → 意見をベクトル化 → タグ統合 →
+            候補グラフ構築、の順で処理します。
             <br />
             <span className="note">
               使用モデル: {chatEndpoint.model}(推奨: gpt-5-mini — Phase 0 検証で stance 分類 19/19 全問正解)。
-              抽出結果は保存され、再実行時はスキップされます。
+              コメント単位で保存され、再実行時はスキップされます。
             </span>
           </p>
           <button type="button" className="primary" onClick={prepare} disabled={preparing}>
@@ -732,16 +798,14 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 label="スタンス"
                 value={view.stanceWeight}
                 max={3}
-                disabled={view.selectedClusterId === null && scope === null}
-                hint="7段階の賛否分布の近さ。上げると賛成派と反対派が分かれます。トピックが混在すると壊れるため、クラスタ選択またはトピック絞り込み中のみ有効"
+                hint="7段階の賛否分布の近さ。上げると賛成派と反対派が分かれます。全体ビューではトピック類似度でゲートされ(無関係トピックを賛否で混ぜない)、クラスタ選択・トピック絞り込み中はそのまま全辺に効きます"
                 onChange={(v) => updateView({ stanceWeight: v })}
               />
               <Slider
                 label="理由"
                 value={view.reasonWeight}
                 max={3}
-                disabled={view.selectedClusterId === null && scope === null}
-                hint="賛否の根拠として挙げている理由タグ(「安全性への懸念」「コスト」等)の一致度。スタンスとは独立で、賛成派と反対派が同じ理由を挙げているケースも束ねられます。クラスタ選択またはトピック絞り込み中のみ有効"
+                hint="賛否の根拠として挙げている理由タグ(「安全性への懸念」「コスト」等)の一致度。スタンスとは独立で、賛成派と反対派が同じ理由を挙げているケースも束ねられます。全体ビューではトピック類似度でゲートされます"
                 onChange={(v) => updateView({ reasonWeight: v })}
               />
               {attributeInfos.length > 0 && (
@@ -837,6 +901,18 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   </select>
                 </label>
               )}
+              <label
+                style={{ fontWeight: 400, margin: 0 }}
+                title="レイアウトが動くたびに、現在の配置でクラスタを自動的に切り直します(粒度は「解像度」に従う)。重い場合はオフにして手動ボタンで切り直してください"
+              >
+                <input
+                  type="checkbox"
+                  style={{ width: "auto", marginRight: 4 }}
+                  checked={autoLayoutCluster}
+                  onChange={(e) => setAutoLayoutCluster(e.target.checked)}
+                />
+                見た目で自動追従
+              </label>
               <button
                 type="button"
                 onClick={reclusterFromLayout}
@@ -850,6 +926,13 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 title="現在の重み設定に名前を付けて保存し、ワンクリックで再現できるようにします"
               >
                 ビューを保存
+              </button>
+              <button
+                type="button"
+                onClick={downloadJson}
+                title="現在の分析データ(意見・タグ・候補グラフ・全体座標)を JSON で保存します(サンプルと同じ形式)"
+              >
+                JSON をダウンロード
               </button>
               {savedViews.map((saved) => (
                 <button key={saved.name} type="button" onClick={() => updateView(saved)}>
@@ -1000,31 +1083,53 @@ function Slider({
 
 /** フェーズ2のプロジェクト選択(トップレベルの「次世代版」から入る) */
 export function Phase2Home() {
-  const projects = useLiveQuery(() => db.projects.orderBy("createdAt").reverse().toArray(), []);
+  // 次世代版に所属するプロジェクトのみ(通常版とは領域を分ける)
+  const projects = useLiveQuery(
+    () =>
+      db.projects
+        .orderBy("createdAt")
+        .reverse()
+        .filter((p) => p.kind === "phase2")
+        .toArray(),
+    [],
+  );
   return (
     <div>
       <h1>次世代版 — インタラクティブ再クラスタリング</h1>
       <p className="note">
-        通常版とは別の分析モードです(クラスタリング方式が異なるため、結果は通常版のレポートとは混ざりません)。
-        前処理(意見抽出+ベクトル化)済みのプロジェクトを選ぶか、事前分析済みサンプルですぐに試せます。 仕組みは{" "}
+        通常版とは別の分析モードです(クラスタリング方式が異なるため、結果は通常版のレポートとは混ざりません)。 CSV
+        を取り込めば通常版を経由せずそのまま分析でき、事前分析済みサンプルでもすぐ試せます。 仕組みは{" "}
         <a href="#/phase2/about">アルゴリズム解説</a> を参照。
       </p>
-      <div className="card">
-        <h3>サンプルで試す(分析の実行不要)</h3>
-        <p className="note">
-          AI人権法案への意見 150 コメント(543意見)を事前分析済み。API
-          キーなしでスライダー操作・クラスタ分裂を体験できます。
-        </p>
-        <button type="button" className="primary" onClick={() => navigate("/phase2/sample")}>
-          サンプルを開く
-        </button>
+      <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+        <div className="card" style={{ flex: 1, minWidth: 260 }}>
+          <h3>CSV を取り込んで始める</h3>
+          <p className="note">
+            意見の CSV を取り込むと、意見抽出・stance/topics/reasons 付与・ベクトル化まで次世代版側で一括実行します
+            (通常版の実行は不要)。
+          </p>
+          <button type="button" className="primary" onClick={() => navigate("/phase2/new")}>
+            データを取り込む
+          </button>
+        </div>
+        <div className="card" style={{ flex: 1, minWidth: 260 }}>
+          <h3>サンプルで試す(分析の実行不要)</h3>
+          <p className="note">
+            AI人権法案への意見 150 コメント(543意見)を事前分析済み。API
+            キーなしでスライダー操作・クラスタ分裂を体験できます。
+          </p>
+          <button type="button" onClick={() => navigate("/phase2/sample")}>
+            サンプルを開く
+          </button>
+        </div>
       </div>
       {(!projects || projects.length === 0) && (
-        <p>
-          プロジェクトがありません。まず <a href="#/new">新規レポート作成</a> で CSV を取り込み、
-          実行画面で前処理を済ませてください。
+        <p className="note" style={{ marginTop: 12 }}>
+          次世代版のプロジェクトはまだありません。上の「データを取り込む」から CSV
+          を読み込むと、ここに並びます(通常版のプロジェクト/レポートとは領域が分かれています)。
         </p>
       )}
+      {projects && projects.length > 0 && <h2>取り込み済みのデータ</h2>}
       <div className="report-grid">
         {projects?.map((project) => (
           <div key={project.id} className="card">
@@ -1032,9 +1137,22 @@ export function Phase2Home() {
             <p className="note">
               {project.comments.length.toLocaleString()} コメント / {project.status}
             </p>
-            <button type="button" className="primary" onClick={() => navigate(`/phase2/${project.id}`)}>
-              開く
-            </button>
+            <div className="row">
+              <button type="button" className="primary" onClick={() => navigate(`/phase2/${project.id}`)}>
+                開く
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={async () => {
+                  if (confirm(`「${project.title}」を削除しますか?(次世代版の中間データも消えます)`)) {
+                    await deletePhase2ProjectData(project.id);
+                  }
+                }}
+              >
+                削除
+              </button>
+            </div>
           </div>
         ))}
       </div>

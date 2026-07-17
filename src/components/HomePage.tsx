@@ -21,6 +21,16 @@ const STATUS_LABEL: Record<Project["status"], string> = {
 export function HomePage() {
   const reports = useLiveQuery(() => db.reports.orderBy("createdAt").reverse().toArray(), []);
   const projects = useLiveQuery(() => db.projects.orderBy("createdAt").reverse().toArray(), []);
+  // ベクトル化(embedding)が済んでいるプロジェクトの id 集合。
+  // 済んでいるものだけ「クラスタリングを再実行」の導線を出す(primaryKeys で本体はロードしない)。
+  const embeddedIds = useLiveQuery(async () => {
+    if (!projects || projects.length === 0) return new Set<string>();
+    const keys = (await db.stepResults
+      .where("[projectId+step]")
+      .anyOf(projects.map((p) => [p.id, "embedding"]))
+      .primaryKeys()) as [string, string][];
+    return new Set(keys.map((k) => k[0]));
+  }, [projects]);
   const importRef = useRef<HTMLInputElement>(null);
   const { settings } = useSettings();
 
@@ -40,6 +50,7 @@ export function HomePage() {
         await requestPersistentStorage();
         const project: Project = {
           id: crypto.randomUUID(),
+          kind: "normal",
           title: meta.title,
           question: meta.question,
           intro: meta.intro,
@@ -129,12 +140,12 @@ export function HomePage() {
         IndexedDB に保存されます — 大事なレポートは必ず JSON エクスポートで手元に保存してください。
       </p>
 
-      {projects && projects.filter((p) => p.status !== "done").length > 0 && (
+      {projects && projects.filter((p) => p.status !== "done" && p.kind !== "phase2").length > 0 && (
         <>
           <h2>処理中のプロジェクト</h2>
           <div className="report-grid">
             {projects
-              .filter((p) => p.status !== "done")
+              .filter((p) => p.status !== "done" && p.kind !== "phase2")
               .map((project) => (
                 <div key={project.id} className="card">
                   <h3>{project.title}</h3>
@@ -147,9 +158,11 @@ export function HomePage() {
                     <button type="button" className="primary" onClick={() => navigate(`/run/${project.id}`)}>
                       {project.status === "created" ? "実行" : "再開 / 詳細"}
                     </button>
-                    <button type="button" onClick={() => navigate(`/interactive/${project.id}`)}>
-                      リアルタイム
-                    </button>
+                    {embeddedIds?.has(project.id) && (
+                      <button type="button" onClick={() => navigate(`/interactive/${project.id}`)}>
+                        クラスタリングを再実行
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="danger"

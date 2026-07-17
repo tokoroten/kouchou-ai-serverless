@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { listModels, listModelsDetailed, probeChat, requestEmbeddings } from "../lib/llm/client";
+import { prepareAndTestGeminiNano } from "../lib/llm/geminiNano";
 import { useSettings } from "../store/settings";
 import { PRESETS, type PresetId, isProviderConfigured, resolveEndpoint } from "../types/settings";
 
@@ -202,6 +203,63 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
     }
   };
 
+  // Gemini Nano: availability 確認 → 必要ならDL(進捗表示) → 小さな往復テスト。
+  // ダウンロードは transient user activation を要するため、この click ハンドラ内で即実行する。
+  const prepareNano = async () => {
+    setTesting(true);
+    setProbeIo(null);
+    setTestResult("Gemini Nano を準備中...");
+    try {
+      const r = await prepareAndTestGeminiNano((m) => setTestResult(m));
+      const s = r.structured;
+      const structuredLabel = !s
+        ? ""
+        : s.supported
+          ? s.valid
+            ? " / structured output ✅(スキーマ準拠 JSON を確認)"
+            : " / structured output ⚠️(responseConstraint は通るが JSON が不正)"
+          : " / structured output ❌ 非対応(text のみ)";
+      setTestResult(
+        `✅ Gemini Nano 利用可能(availability=${r.availability}${r.latencyMs != null ? ` / 応答 ${r.latencyMs}ms` : ""})${structuredLabel}`,
+      );
+      const structuredLine = s?.supported
+        ? `\n[structured] 出力: ${s.output ?? "(なし)"}${s.valid ? "" : " ← JSON 不正"}`
+        : s
+          ? `\n[structured] 非対応: ${s.error ?? ""}`
+          : "";
+      if (r.output) {
+        setProbeIo({ input: "1 + 1 は? 数字のみで答えてください。", output: `${r.output}${structuredLine}` });
+      }
+    } catch (e) {
+      setTestResult(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // ローカル埋め込み: この端末での実効スループットを計測(WebGPU/WASM 判定込み)
+  const runBenchmark = async () => {
+    setTesting(true);
+    setProbeIo(null);
+    setTestResult("ベンチマーク準備中...");
+    try {
+      const { benchmarkLocalEmbedding } = await import("../lib/llm/localEmbedding");
+      const r = await benchmarkLocalEmbedding(endpoint.model, (m) => setTestResult(m));
+      const perSec = r.textsPerSec;
+      const estMin = (n: number) => (perSec > 0 ? Math.max(0.1, n / perSec / 60).toFixed(1) : "∞");
+      const backendLabel = r.backend === "webgpu" ? "WebGPU(GPU)" : r.backend === "wasm" ? "⚠️ WASM(CPU・低速)" : "不明";
+      const wasmNote =
+        r.backend === "wasm" ? "。WASM フォールバック中です。対応 GPU の Chrome だと大幅に速くなります。" : "";
+      setTestResult(
+        `バックエンド: ${backendLabel} / ${perSec.toFixed(1)} 意見/秒(${r.count}件を ${(r.totalMs / 1000).toFixed(1)}秒) / 次元 ${r.dim} — 目安: 2,000意見で約${estMin(2000)}分、7,500意見で約${estMin(7500)}分${wasmNote}`,
+      );
+    } catch (e) {
+      setTestResult(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   // OpenRouter: pricing が 0 の無償モデルを列挙してドロップダウンに反映
   const findFreeModels = async () => {
     setTesting(true);
@@ -374,9 +432,19 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
                 <button type="button" onClick={testConnection} disabled={testing}>
                   {testing ? "テスト中..." : "接続テスト(疎通確認)"}
                 </button>
-                {slot === "chat" && (
+                {slot === "chat" && selection.provider !== "gemini-nano" && (
                   <button type="button" onClick={probeResponse} disabled={testing || !selection.model}>
                     応答テスト(タイムアウト確認)
+                  </button>
+                )}
+                {slot === "chat" && selection.provider === "gemini-nano" && (
+                  <button type="button" className="primary" onClick={prepareNano} disabled={testing}>
+                    {testing ? "準備中..." : "Gemini Nano を準備 + 動作確認"}
+                  </button>
+                )}
+                {slot === "embedding" && endpoint.baseUrl === "local:transformers" && (
+                  <button type="button" onClick={runBenchmark} disabled={testing}>
+                    {testing ? "計測中..." : "ベンチマーク(速度計測)"}
                   </button>
                 )}
                 {slot === "chat" && selection.provider === "openrouter" && (

@@ -138,7 +138,7 @@ async function main() {
   check("リロード後もレポート表示(IndexedDB)", (await page.locator(".cluster-card").count()) > 0);
 
   // 前処理データのエクスポート → インポート → 後処理のみ再実行(LLM抽出・埋め込みはスキップ)
-  await page.getByRole("button", { name: /リアルタイムモードで再クラスタリング/ }).click();
+  await page.getByRole("button", { name: /クラスタリングを再実行/ }).click();
   await page.getByRole("button", { name: "前処理データをエクスポート" }).waitFor({ timeout: 15000 });
   const preDownloadPromise = page.waitForEvent("download", { timeout: 30000 });
   await page.getByRole("button", { name: "前処理データをエクスポート" }).click();

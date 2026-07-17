@@ -7,6 +7,10 @@ import type { ChatMessage } from "./client";
 
 export const GEMINI_NANO_BASE_URL = "local:gemini-nano";
 
+export function isGeminiNano(endpoint: { baseUrl: string }): boolean {
+  return endpoint.baseUrl === GEMINI_NANO_BASE_URL;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Prompt API はまだ型定義が安定していない
 type LanguageModelApi = any;
 
@@ -31,6 +35,110 @@ export async function geminiNanoAvailability(): Promise<string> {
     // fallthrough
   }
   return "unavailable";
+}
+
+export type GeminiNanoDiagnosis = {
+  availability: string;
+  /** 実際に往復テストを行った場合の応答本文 */
+  output?: string;
+  latencyMs?: number;
+  /** structured output(responseConstraint)の対応可否テスト結果 */
+  structured?: {
+    /** responseConstraint 付き prompt が例外を投げずに通ったか */
+    supported: boolean;
+    /** 応答本文(生) */
+    output?: string;
+    /** 応答が JSON としてパースでき、スキーマの必須フィールドを満たしたか */
+    valid?: boolean;
+    /** 未対応・失敗時のメッセージ */
+    error?: string;
+  };
+};
+
+/**
+ * Gemini Nano の動作確認: availability を取得し、必要ならモデルをダウンロード
+ * (monitor で進捗を通知)してから小さな往復テストを1回行う。
+ *
+ * 重要: モデル未ダウンロード時の create() は transient user activation を要求するため、
+ * 必ずボタンの click ハンドラ内(await を跨ぐ前)から呼ぶこと。
+ */
+export async function prepareAndTestGeminiNano(
+  onProgress?: (message: string) => void,
+  signal?: AbortSignal,
+): Promise<GeminiNanoDiagnosis> {
+  const api = getLanguageModelApi();
+  if (!api) {
+    throw new Error("この環境では Gemini Nano を利用できません(Chrome 138+ の Prompt API / LanguageModel が必要です)");
+  }
+  const availability = await geminiNanoAvailability();
+  if (availability === "unavailable") {
+    throw new Error(
+      "availability=unavailable。対応 Chrome か、chrome://flags の Prompt API 有効化・対応 GPU/メモリ要件を確認してください。",
+    );
+  }
+  if (availability === "downloadable" || availability === "downloading") {
+    onProgress?.("モデル未ダウンロード。準備を開始します...");
+  }
+  // monitor 付き create でダウンロード進捗を受け取る(未DLならここでDLが走る)
+  // biome-ignore lint/suspicious/noExplicitAny: Prompt API のセッション/モニタは型未確定
+  const session: any = await api.create({
+    signal,
+    // biome-ignore lint/suspicious/noExplicitAny: monitor の型は未公開
+    monitor(m: any) {
+      m.addEventListener?.("downloadprogress", (e: { loaded?: number }) => {
+        const pct = Math.round((typeof e.loaded === "number" ? e.loaded : 0) * 100);
+        onProgress?.(`モデルダウンロード中: ${pct}%`);
+      });
+    },
+  });
+  try {
+    onProgress?.("応答テスト(text)中...");
+    const start = Date.now();
+    const output: string = await session.prompt("1 + 1 は? 数字のみで答えてください。", { signal });
+    const latencyMs = Date.now() - start;
+
+    // structured output(responseConstraint = JSON Schema)の対応可否を実際に叩いて判定する
+    onProgress?.("structured output テスト中...");
+    const structured = await testStructuredOutput(session, signal);
+
+    return { availability, output: String(output).trim(), latencyMs, structured };
+  } finally {
+    try {
+      session.destroy?.();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** responseConstraint に小さな JSON Schema を渡して、structured output が使えるか判定する */
+// biome-ignore lint/suspicious/noExplicitAny: Prompt API セッション
+async function testStructuredOutput(session: any, signal?: AbortSignal): Promise<GeminiNanoDiagnosis["structured"]> {
+  const schema = {
+    type: "object",
+    properties: { sum: { type: "number" } },
+    required: ["sum"],
+    additionalProperties: false,
+  };
+  try {
+    const raw: string = await session.prompt("1 + 1 の答えを JSON で返してください。", {
+      signal,
+      responseConstraint: schema,
+    });
+    const text = String(raw).trim();
+    let valid = false;
+    try {
+      const obj = JSON.parse(text);
+      valid = !!obj && typeof obj === "object" && typeof (obj as { sum?: unknown }).sum === "number";
+    } catch {
+      // JSON にならなければ valid=false のまま
+    }
+    return { supported: true, output: text, valid };
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    // responseConstraint 非対応の実装はここで例外になる
+    return { supported: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // システムプロンプトごとにベースセッションをキャッシュし、リクエストごとに clone する

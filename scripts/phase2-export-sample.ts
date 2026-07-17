@@ -10,9 +10,8 @@ import { normalizeComments } from "../src/lib/csv";
 import { runClusteringCore } from "../src/lib/pipeline/clusteringCore";
 import type { Checkpoints, PipelineContext } from "../src/lib/pipeline/context";
 import { embedding } from "../src/lib/pipeline/steps/embedding";
-import { extraction } from "../src/lib/pipeline/steps/extraction";
 import { assignTagVector, buildCodebook } from "../src/phase2/codebook";
-import { enrichArguments } from "../src/phase2/enrich";
+import { extractAndEnrich } from "../src/phase2/extractEnrich";
 import { buildCandidateEdges } from "../src/phase2/graph";
 import { serializeSample } from "../src/phase2/sample";
 import type { OpinionRecord } from "../src/phase2/types";
@@ -67,17 +66,15 @@ async function main() {
   const comments = normalizeComments(parsed.data, "reasoning", null, ["age", "gender", "job", "education"]).slice(0, N);
   const attributesByComment = new Map(comments.map((c) => [c.commentId, c.attributes]));
 
-  console.log("抽出(キャッシュ)...");
-  const ext = await extraction(comments, extractionPrompt, ctx);
+  console.log("意見抽出 + 構造化属性付与(キャッシュ)...");
+  const { args, relations, enrichments } = await extractAndEnrich(comments, extractionPrompt, ctx);
   console.log("埋め込み(キャッシュ)...");
-  const emb = await embedding(ext.args, ctx);
-  console.log("構造化(キャッシュ)...");
-  const enrichments = await enrichArguments(ext.args, ctx);
+  const emb = await embedding(args, ctx);
   console.log("コードブック(キャッシュ)...");
   const codebook = await buildCodebook(enrichments, ctx);
 
-  const argIdToCommentId = new Map(ext.relations.map((r) => [r.argId, r.commentId]));
-  const records: OpinionRecord[] = ext.args.map((arg, i) => {
+  const argIdToCommentId = new Map(relations.map((r) => [r.argId, r.commentId]));
+  const records: OpinionRecord[] = args.map((arg, i) => {
     const commentId = argIdToCommentId.get(arg.argId) ?? "";
     return {
       id: arg.argId,

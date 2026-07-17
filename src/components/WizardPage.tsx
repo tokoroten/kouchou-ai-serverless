@@ -115,6 +115,7 @@ export function WizardPage() {
     await requestPersistentStorage();
     const project: Project = {
       id: crypto.randomUUID(),
+      kind: "normal",
       title: title || "無題のレポート",
       question,
       intro,

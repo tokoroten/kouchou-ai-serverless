@@ -1,6 +1,7 @@
 import { HomePage } from "./components/HomePage";
 import { InteractivePage } from "./components/InteractivePage";
 import { Phase2AboutPage } from "./components/Phase2AboutPage";
+import { Phase2NewPage } from "./components/Phase2NewPage";
 import { Phase2Home, Phase2Page } from "./components/Phase2Page";
 import { RunPage } from "./components/RunPage";
 import { SettingsPage } from "./components/SettingsPage";
@@ -26,6 +27,8 @@ export function App() {
     page = <InteractivePage projectId={route.slice("/interactive/".length)} />;
   } else if (route === "/phase2") {
     page = <Phase2Home />;
+  } else if (route === "/phase2/new") {
+    page = <Phase2NewPage />;
   } else if (route === "/phase2/about") {
     page = <Phase2AboutPage />;
   } else if (route.startsWith("/phase2/")) {
@@ -42,7 +45,6 @@ export function App() {
         </a>
         <a href="#/">レポート一覧</a>
         <a href="#/new">新規作成</a>
-        <a href="#/phase2">次世代版</a>
         <a href="#/settings">設定</a>
         <a
           href="https://github.com/tokoroten/kouchou-ai-serverless"
@@ -60,6 +62,10 @@ export function App() {
           kouchou-ai(広聴AI)
         </a>
         の分析パイプラインをブラウザ内で再実装したものです。データはブラウザと選択した LLM API 以外へ送信されません。
+        {" · "}
+        <a href="#/phase2" className="footer-phase2">
+          次世代版
+        </a>
       </footer>
     </div>
   );

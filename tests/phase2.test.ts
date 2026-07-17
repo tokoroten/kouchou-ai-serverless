@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { trackClusters } from "../src/phase2/clusterTracker";
 import { assignTagVector, normalizeTag } from "../src/phase2/codebook";
 import { normalizeStance } from "../src/phase2/enrich";
+import { parseExtractEnrich } from "../src/phase2/extractEnrich";
 import { buildCandidateEdges, clusterByLayout, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
 import { summarizeCluster } from "../src/phase2/labelTemplate";
 import { sparseCosine, stanceSimilarity } from "../src/phase2/similarity";
@@ -37,6 +38,55 @@ describe("stanceSimilarity(累積L1)", () => {
     const explicit = stance({ explicitSupport: 1 });
     const opposition = stance({ explicitOpposition: 1 });
     expect(stanceSimilarity(conditional, explicit)).toBeGreaterThan(stanceSimilarity(conditional, opposition));
+  });
+});
+
+describe("parseExtractEnrich(結合抽出の投入口)", () => {
+  it("opinions 配列を argument + enrichment に分解する", () => {
+    const response = JSON.stringify({
+      opinions: [
+        {
+          argument: "原発は再稼働すべき",
+          target: "原発再稼働",
+          topics: [{ label: "エネルギー政策", weight: 0.9 }],
+          stance: { ...emptyStance(), unknown: 0, explicitSupport: 1 },
+          reasons: [{ label: "安定供給", weight: 0.8 }],
+          conditions: [],
+          holder: "筆者",
+          quotedSpeech: false,
+          commitment: 0.9,
+          confidence: 0.8,
+        },
+      ],
+    });
+    const out = parseExtractEnrich(response);
+    expect(out).toHaveLength(1);
+    expect(out[0].argument).toBe("原発は再稼働すべき");
+    expect(dominantStance(out[0].enrichment.stance)).toBe("explicitSupport");
+    expect(out[0].enrichment.topics[0].label).toBe("エネルギー政策");
+  });
+
+  it("複数意見を分割し、空文字は落とす", () => {
+    const response = JSON.stringify({
+      opinions: [
+        { argument: "教育を強化すべき", topics: [], stance: emptyStance(), reasons: [] },
+        { argument: "  ", topics: [], stance: emptyStance(), reasons: [] },
+        { argument: "人材養成が必要", topics: [], stance: emptyStance(), reasons: [] },
+      ],
+    });
+    const out = parseExtractEnrich(response);
+    expect(out.map((o) => o.argument)).toEqual(["教育を強化すべき", "人材養成が必要"]);
+  });
+
+  it("従来形式(extractedOpinionList / 文字列配列)にフォールバックし enrichment は unknown 立場", () => {
+    const response = JSON.stringify({ extractedOpinionList: ["市民教育が必要", "人材養成すべき"] });
+    const out = parseExtractEnrich(response);
+    expect(out.map((o) => o.argument)).toEqual(["市民教育が必要", "人材養成すべき"]);
+    expect(dominantStance(out[0].enrichment.stance)).toBe("unknown");
+  });
+
+  it("壊れた JSON は空配列", () => {
+    expect(parseExtractEnrich("これは JSON ではない")).toEqual([]);
   });
 });
 

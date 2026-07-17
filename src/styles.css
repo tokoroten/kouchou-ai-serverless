@@ -364,3 +364,12 @@ table.preview-table {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* 次世代版はまだ実験的。目立たせず、フッターの端に控えめに置く */
+.footer-phase2 {
+  color: var(--muted);
+  text-decoration: none;
+}
+.footer-phase2:hover {
+  text-decoration: underline;
+}

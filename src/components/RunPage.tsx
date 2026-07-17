@@ -24,6 +24,12 @@ export function RunPage({ projectId }: { projectId: string }) {
   const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
   const runner = useRunner();
   const isRunning = runner.runningProjectId === projectId;
+  // ベクトル化(embedding)が済んでいるかどうか。済んでいない間は
+  // 「クラスタリングを再実行」の導線を出さない(embedding 以後を対話再実行する画面のため)
+  const hasEmbedding = useLiveQuery(
+    () => db.stepResults.where("[projectId+step]").equals([projectId, "embedding"]).count(),
+    [projectId],
+  );
 
   // クラスタリング中は UMAP の収束過程をライブ表示する
   const coords = isRunning ? runner.intermediateCoords : null;
@@ -168,13 +174,13 @@ export function RunPage({ projectId }: { projectId: string }) {
             レポートを開く
           </button>
         )}
-        {!isRunning && (
+        {!isRunning && !!hasEmbedding && (
           <button
             type="button"
             onClick={() => navigate(`/interactive/${projectId}`)}
-            title="前処理済みデータで UMAP をライブ表示しながらクラスタ数を対話調整"
+            title="ベクトル化済みデータで UMAP をライブ表示しながらクラスタ数を対話調整(クラスタリング以後を再実行)"
           >
-            リアルタイムモード
+            クラスタリングを再実行
           </button>
         )}
         <button type="button" onClick={() => navigate("/")}>

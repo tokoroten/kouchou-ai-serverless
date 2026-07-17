@@ -33,6 +33,62 @@ async function getPipeline(model: string, onStatus?: (message: string) => void) 
   return pipe;
 }
 
+export type EmbeddingBackend = "webgpu" | "wasm" | "unknown";
+
+export type EmbeddingBenchmark = {
+  backend: EmbeddingBackend;
+  count: number;
+  totalMs: number;
+  textsPerSec: number;
+  dim: number;
+};
+
+/**
+ * ローカル埋め込みの実効スループットを計測する。
+ * ウォームアップ(モデルロード/DL)を計測対象から除外し、定常状態のバッチ処理時間を測る。
+ * バックエンド(WebGPU / WASM)も判定して返す — WASM フォールバックだと桁で遅いため。
+ */
+export async function benchmarkLocalEmbedding(
+  model: string,
+  onStatus?: (message: string) => void,
+  signal?: AbortSignal,
+  options?: { count?: number; sampleText?: string },
+): Promise<EmbeddingBenchmark> {
+  const count = options?.count ?? 64;
+  const sample =
+    options?.sampleText ??
+    "これはローカル埋め込みの速度計測用のサンプル文です。実データに近い長さの日本語テキストを想定しています。";
+  let backend: EmbeddingBackend = "unknown";
+  const captureBackend = (message: string) => {
+    if (/WebGPU/i.test(message)) backend = "webgpu";
+    else if (/WASM/i.test(message)) backend = "wasm";
+    onStatus?.(message);
+  };
+
+  // ウォームアップ(モデル読み込み/ダウンロード時間を計測から除外)
+  onStatus?.("ウォームアップ(モデル読み込み)...");
+  await embedLocallyViaWorker(new Array(8).fill(sample), model, captureBackend, signal);
+
+  // 計測本番(実データに近い件数を定常状態で回す)
+  onStatus?.(`計測中(${count} 件)...`);
+  const texts = Array.from({ length: count }, (_, i) => `${sample} #${i}`);
+  const start = Date.now();
+  const vectors = await embedLocallyViaWorker(texts, model, () => {}, signal);
+  const totalMs = Date.now() - start;
+
+  // ロード済みで status が出なかった場合は navigator から推定
+  if (backend === "unknown") {
+    backend = typeof navigator !== "undefined" && "gpu" in navigator ? "webgpu" : "wasm";
+  }
+  return {
+    backend,
+    count,
+    totalMs,
+    textsPerSec: totalMs > 0 ? count / (totalMs / 1000) : 0,
+    dim: vectors[0]?.length ?? 0,
+  };
+}
+
 // ---- Worker 経由の実行(ブラウザ用。WASM 時にメインスレッドを塞がない) ----
 
 let embeddingWorker: Worker | null = null;

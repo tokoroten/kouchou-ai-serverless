@@ -359,7 +359,12 @@ export async function listModels(endpoint: EndpointConfig, signal?: AbortSignal)
     const { geminiNanoAvailability } = await import("./geminiNano");
     const availability = await geminiNanoAvailability();
     if (availability === "unavailable") {
-      throw new LlmError("この環境では Gemini Nano を利用できません(Chrome の Prompt API が必要です)");
+      throw new LlmError("この環境では Gemini Nano を利用できません(Chrome 138+ の Prompt API が必要です)");
+    }
+    if (availability === "downloadable" || availability === "downloading") {
+      throw new LlmError(
+        `Gemini Nano はまだ使用できません(${availability})。設定画面の「Gemini Nano を準備」でモデルをダウンロードしてください。`,
+      );
     }
     return ["gemini-nano"];
   }

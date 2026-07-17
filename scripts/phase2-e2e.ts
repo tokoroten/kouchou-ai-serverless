@@ -10,10 +10,9 @@ import Papa from "papaparse";
 import { normalizeComments } from "../src/lib/csv";
 import type { Checkpoints, PipelineContext } from "../src/lib/pipeline/context";
 import { embedding } from "../src/lib/pipeline/steps/embedding";
-import { extraction } from "../src/lib/pipeline/steps/extraction";
 import { trackClusters } from "../src/phase2/clusterTracker";
 import { assignTagVector, buildCodebook } from "../src/phase2/codebook";
-import { enrichArguments } from "../src/phase2/enrich";
+import { extractAndEnrich } from "../src/phase2/extractEnrich";
 import { buildCandidateEdges, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../src/phase2/labelTemplate";
 import type { OpinionRecord } from "../src/phase2/types";
@@ -73,22 +72,15 @@ async function main() {
   const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
   const comments = normalizeComments(parsed.data, "reasoning", null, []).slice(0, N);
 
-  console.log(`[1/6] 意見抽出 (${comments.length} コメント, ${MODEL})...`);
-  const ext = await extraction(comments, extractionPrompt, ctx);
-  console.log(`  → ${ext.args.length} 意見`);
-
-  console.log("[2/6] 埋め込み...");
-  const emb = await embedding(ext.args, ctx);
-  console.log(`  → ${emb.dim} 次元`);
-
-  console.log("[3/6] 構造化抽出 (stance/topics/reasons)...");
+  console.log(`[1/5] 意見抽出 + 構造化属性付与 (${comments.length} コメント, ${MODEL})...`);
   let last = 0;
-  const enrichments = await enrichArguments(ext.args, ctx, (done, total) => {
-    if (done - last >= 50 || done === total) {
-      console.log(`  ${done}/${total}`);
+  const { args, enrichments } = await extractAndEnrich(comments, extractionPrompt, ctx, (done, total) => {
+    if (done - last >= 25 || done === total) {
+      console.log(`  ${done}/${total} コメント`);
       last = done;
     }
   });
+  console.log(`  → ${args.length} 意見`);
   const stanceCounts = new Map<string, number>();
   for (const e of enrichments) {
     const s = dominantStance(e.stance);
@@ -96,12 +88,16 @@ async function main() {
   }
   console.log(`  stance 内訳: ${[...stanceCounts.entries()].map(([k, v]) => `${k}:${v}`).join(", ")}`);
 
-  console.log("[4/6] コードブック統合(2パス)...");
+  console.log("[2/5] 埋め込み...");
+  const emb = await embedding(args, ctx);
+  console.log(`  → ${emb.dim} 次元`);
+
+  console.log("[3/5] コードブック統合(2パス)...");
   const codebook = await buildCodebook(enrichments, ctx);
   console.log(`  topics: ${codebook.topics.slice(0, 10).join(", ")}${codebook.topics.length > 10 ? "..." : ""}`);
   console.log(`  reasons: ${codebook.reasons.slice(0, 10).join(", ")}${codebook.reasons.length > 10 ? "..." : ""}`);
 
-  const records: OpinionRecord[] = ext.args.map((arg, i) => ({
+  const records: OpinionRecord[] = args.map((arg, i) => ({
     id: arg.argId,
     originalCommentId: "",
     claimText: arg.argument,
@@ -112,7 +108,7 @@ async function main() {
   const assigned = records.filter((r) => r.topicVector.size > 0).length;
   console.log(`  タグ割当率: topics ${((assigned / records.length) * 100).toFixed(0)}%`);
 
-  console.log("[5/6] 候補グラフ構築...");
+  console.log("[4/5] 候補グラフ構築...");
   const t0 = Date.now();
   const edges = buildCandidateEdges(records, emb.vectors, emb.dim, {
     onProgress: (done, total, phase) => {
@@ -121,7 +117,7 @@ async function main() {
   });
   console.log(`  → ${edges.count.toLocaleString()} 辺 (${Math.round((Date.now() - t0) / 1000)}s)`);
 
-  console.log("[6/6] クラスタリング検証...");
+  console.log("[5/5] クラスタリング検証...");
   // トピックビュー
   const baseView = { ...DEFAULT_VIEW };
   const baseWeights = computeEdgeWeights(edges, baseView, null);

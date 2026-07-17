@@ -320,10 +320,10 @@ export function InteractivePage({ projectId }: { projectId: string }) {
 
   return (
     <div>
-      <h1>{project.title} — リアルタイムモード</h1>
+      <h1>{project.title} — クラスタリング再実行</h1>
       <p className="note">
-        前処理(意見抽出+ベクトル化)済みデータを使い、UMAP の収束をライブ表示しながら
-        クラスタ数を対話的に調整できます。ラベリングは構成が決まってから実行します
+        ベクトル化済みデータを使い、クラスタリング(UMAP + KMeans + ward)を再実行します。UMAP
+        の収束をライブ表示しながらクラスタ数を対話的に調整でき、ラベリングは構成が決まってから実行します
         (同一構成のラベルはキャッシュされ無料)。
       </p>
       {error && <div className="error-box">{error}</div>}

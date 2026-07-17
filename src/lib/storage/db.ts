@@ -84,6 +84,23 @@ export async function deleteProjectData(projectId: string): Promise<void> {
 }
 
 /**
+ * 次世代版プロジェクトの削除。プロジェクト本体に加え、隔離した
+ * "{projectId}-phase2" namespace の中間データ(phase2-extract / embedding /
+ * codebook / phase2-edges / umap 等)もまとめて消す。
+ */
+export async function deletePhase2ProjectData(projectId: string): Promise<void> {
+  const phase2Id = `${projectId}-phase2`;
+  await db.transaction("rw", db.projects, db.stepResults, db.extractionCache, db.chunkCache, async () => {
+    await db.projects.delete(projectId);
+    for (const ns of [projectId, phase2Id]) {
+      await db.stepResults.where("[projectId+step]").between([ns, ""], [ns, "￿"]).delete();
+      await db.extractionCache.where("projectId").equals(ns).delete();
+      await db.chunkCache.where("[projectId+step]").between([ns, ""], [ns, "￿"]).delete();
+    }
+  });
+}
+
+/**
  * ポストプロセス(clustering 以降)の結果のみリセットする。
  * 高コストな前処理(extraction=意見分解, embedding=ベクトル化)は保持されるため、
  * クラスタ数などのパラメータを変えて LLM コストほぼゼロで再実行できる。
