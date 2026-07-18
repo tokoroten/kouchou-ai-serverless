@@ -103,12 +103,27 @@ function buildHeaders(endpoint: EndpointConfig): Record<string, string> {
   return headers;
 }
 
+/**
+ * baseUrl のホストが指定プロバイダかを厳密判定する。
+ * 部分文字列一致(includes)だと "api.openai.com.evil.com" や
+ * "evil.com/?x=api.openai.com" のような URL も通ってしまうため、
+ * URL としてパースしてホスト名の完全一致 / サブドメイン一致で判定する。
+ */
+function hostMatches(baseUrl: string, host: string): boolean {
+  try {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === host || hostname.endsWith(`.${host}`);
+  } catch {
+    return false;
+  }
+}
+
 /** reasoning effort / service tier をプロバイダ方言に合わせて body に載せる */
 function applyOptionalParams(body: Record<string, unknown>, endpoint: EndpointConfig): boolean {
   let applied = false;
   const effort = endpoint.reasoningEffort;
   if (effort) {
-    if (endpoint.baseUrl.includes("openrouter.ai")) {
+    if (hostMatches(endpoint.baseUrl, "openrouter.ai")) {
       body.reasoning = { effort };
     } else {
       body.reasoning_effort = effort;
@@ -116,7 +131,7 @@ function applyOptionalParams(body: Record<string, unknown>, endpoint: EndpointCo
     applied = true;
   }
   if (endpoint.serviceTier) {
-    if (endpoint.baseUrl.includes("openrouter.ai")) {
+    if (hostMatches(endpoint.baseUrl, "openrouter.ai")) {
       // OpenRouter はモデルサフィックスでルーティング指定(:floor = 最安 / :nitro = 最速)
       body.model = `${endpoint.model}:${endpoint.serviceTier}`;
     } else {
@@ -472,7 +487,7 @@ export async function probeChat(endpoint: EndpointConfig, timeoutMs = 30_000): P
         | undefined;
       const reasoningTokens = usageDetails?.completion_tokens_details?.reasoning_tokens ?? 0;
       if (reasoningTokens > 0) {
-        const summary = endpoint.baseUrl.includes("api.openai.com")
+        const summary = hostMatches(endpoint.baseUrl, "api.openai.com")
           ? await fetchOpenAiReasoningSummary(endpoint).catch(() => null)
           : null;
         reasoning = summary
