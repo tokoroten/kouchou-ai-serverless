@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { parsePreprocessed, parseResultJson, serializePreprocessed } from "../src/lib/export";
+import { injectJsonTag, parsePreprocessed, parseResultJson, serializePreprocessed } from "../src/lib/export";
+
+describe("injectJsonTag", () => {
+  const template =
+    '<body><script type="application/json" id="report-data">null</script>' +
+    '<script type="application/json" id="ponchie-data">null</script></body>';
+
+  it("指定タグの中身だけを差し替える", () => {
+    const html = injectJsonTag(template, "report-data", { a: 1 });
+    expect(html).toContain('id="report-data">{"a":1}</script>');
+    expect(html).toContain('id="ponchie-data">null</script>');
+  });
+
+  it("</script> を含む値でもタグが壊れない", () => {
+    const html = injectJsonTag(template, "report-data", { text: "</script><script>alert(1)" });
+    expect(html).not.toContain("</script><script>alert(1)");
+    expect(html).toContain("\\u003c/script>\\u003cscript>alert(1)");
+  });
+
+  it("タグが無いとき required なら例外、required=false なら素通し", () => {
+    expect(() => injectJsonTag("<body></body>", "report-data", 1)).toThrow(/report-data/);
+    expect(injectJsonTag("<body></body>", "ponchie-data", 1, { required: false })).toBe("<body></body>");
+  });
+});
 
 describe("parseResultJson", () => {
   it("最低限のスキーマ検証を行う", () => {

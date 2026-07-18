@@ -88,23 +88,48 @@ export function exportClustersCsv(result: Result): void {
   downloadBlob(new Blob([toCsv(rows)], { type: "text/csv" }), "clusters.csv");
 }
 
+/** 単一 HTML に同梱するポンチ絵(画像は data URL 化して埋め込む) */
+export type PonchieExport = { dataUrl: string; model: string; createdAt: number; prompt?: string };
+
+/**
+ * テンプレートの <script type="application/json" id="..."> タグへ JSON を差し込む。
+ * required=false のタグは、古いテンプレートに存在しなくてもエクスポートを止めない。
+ */
+export function injectJsonTag(template: string, id: string, value: unknown, { required = true } = {}): string {
+  // </script> でタグが閉じないようエスケープして埋め込む
+  const json = JSON.stringify(value).replace(/</g, "\\u003c");
+  const marker = `<script type="application/json" id="${id}">`;
+  const start = template.indexOf(marker);
+  if (start === -1) {
+    if (required) throw new Error(`テンプレートに ${id} タグがありません`);
+    return template;
+  }
+  const end = template.indexOf("</script>", start);
+  if (end === -1) throw new Error(`テンプレートの ${id} タグが閉じていません`);
+  return template.slice(0, start + marker.length) + json + template.slice(end);
+}
+
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("画像の読み込みに失敗しました"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /**
  * 単一 HTML レポート(DESIGN §7.1-2)。
  * ビルド時に生成したビューア単体テンプレート(report-template.html)を取得し、
- * report-data スクリプトタグへ Result JSON を差し込む。
+ * report-data スクリプトタグへ Result JSON を差し込む。ポンチ絵があれば
+ * ponchie-data タグへ data URL 込みで同梱する(タグの無い古いテンプレートでは黙って省く)。
  */
-export async function exportSingleHtml(result: Result): Promise<void> {
+export async function exportSingleHtml(result: Result, ponchie: PonchieExport | null = null): Promise<void> {
   const response = await fetch(`${import.meta.env.BASE_URL}report-template.html`);
   if (!response.ok) throw new Error("レポートテンプレートの取得に失敗しました");
   const template = await response.text();
-  // </script> でタグが閉じないようエスケープして埋め込む
-  const json = JSON.stringify(result).replace(/</g, "\\u003c");
-  const marker = '<script type="application/json" id="report-data">';
-  const start = template.indexOf(marker);
-  if (start === -1) throw new Error("テンプレートに report-data タグがありません");
-  const end = template.indexOf("</script>", start);
-  if (end === -1) throw new Error("テンプレートの report-data タグが閉じていません");
-  const html = template.slice(0, start + marker.length) + json + template.slice(end);
+  let html = injectJsonTag(template, "report-data", result);
+  if (ponchie) html = injectJsonTag(html, "ponchie-data", ponchie, { required: false });
   const title = result.config?.name ?? "report";
   downloadBlob(new Blob([html], { type: "text/html" }), `${title}.html`);
 }

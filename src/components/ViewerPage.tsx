@@ -1,6 +1,12 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useEffect, useRef, useState } from "react";
-import { exportArgumentsCsv, exportClustersCsv, exportResultJson, exportSingleHtml } from "../lib/export";
+import {
+  blobToDataUrl,
+  exportArgumentsCsv,
+  exportClustersCsv,
+  exportResultJson,
+  exportSingleHtml,
+} from "../lib/export";
 import { generateAndSavePonchie } from "../lib/imageGen";
 import { navigate } from "../lib/router";
 import { db, deleteReportImage, getReportImage, type ReportImageRow } from "../lib/storage/db";
@@ -83,7 +89,15 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   const exportHtml = async () => {
     setExporting(true);
     try {
-      await exportSingleHtml(report.result);
+      // 生成済みポンチ絵があれば data URL にして同梱する(PowerPoint と同じ扱い)
+      const ponchie = imageRow
+        ? {
+            dataUrl: await blobToDataUrl(imageRow.blob),
+            model: imageRow.model,
+            createdAt: imageRow.createdAt,
+          }
+        : null;
+      await exportSingleHtml(report.result, ponchie);
     } catch (e) {
       alert(`エクスポートに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
