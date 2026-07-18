@@ -321,6 +321,49 @@ export function clusterByLouvain(
  * 切り直すことで、目に見える分離とクラスタ色・ラベルを一致させる。
  * kNN はブルートフォース(想定規模 <1万点)、辺の重みはガウシアン(σ=kNN距離の中央値)。
  */
+/**
+ * Ward 凝集の併合列(コスト昇順の (rootA, rootB) ペア)から K クラスタを作る樹形図カット。
+ * n 点を K クラスタにするには「安い方から n-K 回」併合すればよい(union-find で再生)。
+ * 併合数が足りない(グラフが非連結で C 成分)場合は全併合を適用し C クラスタになる。
+ * 返り値は各点のコミュニティ番号(0..)。
+ */
+export function cutWardToK(mergeA: Int32Array, mergeB: Int32Array, n: number, k: number): Int32Array {
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  const find = (x: number): number => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    let cur = x;
+    while (parent[cur] !== r) {
+      const next = parent[cur];
+      parent[cur] = r;
+      cur = next;
+    }
+    return r;
+  };
+  const total = mergeA.length;
+  const merges = Math.min(Math.max(0, n - k), total); // K クラスタにするための併合回数
+  for (let m = 0; m < merges; m++) {
+    const ra = find(mergeA[m]);
+    const rb = find(mergeB[m]);
+    if (ra !== rb) parent[rb] = ra;
+  }
+  // ルート → 0 始まりの連番ラベル
+  const labelOf = new Map<number, number>();
+  const out = new Int32Array(n);
+  let next = 0;
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    let lbl = labelOf.get(r);
+    if (lbl === undefined) {
+      lbl = next++;
+      labelOf.set(r, lbl);
+    }
+    out[i] = lbl;
+  }
+  return out;
+}
+
 export function clusterByLayout(x: Float32Array, y: Float32Array, resolution: number, k = 8): Int32Array {
   const n = x.length;
   const communities = new Int32Array(n).fill(-1);

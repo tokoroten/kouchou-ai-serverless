@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { requestChat } from "../lib/llm/client";
+import { Semaphore, requestChat } from "../lib/llm/client";
+import { parseLabelResponse } from "../lib/llm/jsonParse";
 import { fnv1a } from "../lib/pipeline/clusterTable";
 import type { PipelineContext } from "../lib/pipeline/context";
 import { navigate } from "../lib/router";
@@ -8,7 +9,7 @@ import { dexieCheckpoints } from "../lib/storage/checkpoints";
 import { db, deletePhase2ProjectData } from "../lib/storage/db";
 import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
 import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
-import { type EdgeSet, clusterByLayout, clusterByLouvain, computeEdgeWeights, subsetEdges } from "../phase2/graph";
+import { type EdgeSet, computeEdgeWeights, cutWardToK, subsetEdges } from "../phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
 import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
 import { deserializeSample, serializeSample } from "../phase2/sample";
@@ -30,8 +31,25 @@ import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 
 type Coords = { x: Float32Array; y: Float32Array };
 
+// 同梱の事前分析済みサンプル(public/ の JSON)。projectId がこの id のときサンプルモードになる。
+export const PHASE2_SAMPLES = [
+  {
+    id: "sample",
+    file: "sample-phase2.json",
+    title: "AI人権法案への意見(150コメント・543意見)",
+    note: "API キーなしでスライダー操作・クラスタ分裂を体験できます。",
+  },
+  {
+    id: "sample-survey",
+    file: "sample-phase2-survey.json",
+    title: "仮想アンケート 2,000件(3,098意見)",
+    note: "大きめの実データ。Ward クラスタリングや属性軸を試せます(約8MB・初回読み込みは少し時間がかかります)。",
+  },
+] as const;
+
 export function Phase2Page({ projectId }: { projectId: string }) {
-  const isSample = projectId === "sample";
+  const sampleDef = PHASE2_SAMPLES.find((s) => s.id === projectId);
+  const isSample = !!sampleDef;
   const project = useLiveQuery(() => (isSample ? undefined : db.projects.get(projectId)), [projectId, isSample]);
   const { settings } = useSettings();
 
@@ -56,9 +74,10 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
   const [explanation, setExplanation] = useState<{ clusterId: string; text: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
+  // LLM 生成のラベル/説明(clusterId → {label, description})。ボタンで生成、構成ハッシュでキャッシュ。
+  const [llmLabels, setLlmLabels] = useState<Map<string, { label: string; description: string }>>(new Map());
+  const [labeling, setLabeling] = useState(false);
   const [savedViews, setSavedViews] = useState<ClusterView[]>([]);
-  // レイアウトが動くたびに「見た目で切り直す」を自動実行するか(既定オン)
-  const [autoLayoutCluster, setAutoLayoutCluster] = useState(true);
 
   const layoutWorkerRef = useRef<Worker | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -67,8 +86,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   const attrSimCacheRef = useRef<Map<string, Float32Array>>(new Map());
   // 全体ビューの座標スナップショット(ドリルダウンから戻るときの復元用)
   const globalCoordsRef = useRef<Coords | null>(null);
-  // 「見た目で切り直す」自動実行のスロットル(毎フレーム Louvain は重いため)
-  const autoReclusterAtRef = useRef(0);
+  // レイアウト収束時に Worker が計算した Ward 併合列。K スライダーはこれを切り直すだけ。
+  const linkageRef = useRef<{ a: Int32Array; b: Int32Array; n: number } | null>(null);
+  const clusterKRef = useRef(DEFAULT_VIEW.clusterK);
+  clusterKRef.current = view.clusterK ?? DEFAULT_VIEW.clusterK;
+  const activeLenRef = useRef(0);
 
   // スコープ適用後のレコードと辺(ドリルダウン中は部分集合)
   const activeRecords = useMemo(
@@ -76,6 +98,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     [records, scope],
   );
   const activeEdges = useMemo(() => (edges && scope ? subsetEdges(edges, scope.indices) : edges), [edges, scope]);
+  activeLenRef.current = activeRecords?.length ?? 0;
 
   useEffect(() => {
     return () => {
@@ -92,7 +115,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
 
   // 次世代版は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
   // チェックポイントも通常版(projectId)と衝突しない専用 namespace に隔離する。
-  const checkpointsId = isSample ? "phase2-sample" : `${projectId}-phase2`;
+  const checkpointsId = isSample ? `phase2-${projectId}` : `${projectId}-phase2`;
 
   const buildCtx = useCallback((): PipelineContext | null => {
     if (!isSample && !project) return null;
@@ -114,11 +137,11 @@ export function Phase2Page({ projectId }: { projectId: string }) {
 
   // ---- サンプルモード: 事前分析済みデータを読み込むだけで動く ----
   useEffect(() => {
-    if (!isSample || records) return;
+    if (!isSample || !sampleDef || records) return;
     (async () => {
       try {
         setStatus("サンプルデータ読み込み中...");
-        const response = await fetch(`${import.meta.env.BASE_URL}sample-phase2.json`);
+        const response = await fetch(`${import.meta.env.BASE_URL}${sampleDef.file}`);
         if (!response.ok) throw new Error(`サンプルの取得に失敗 (HTTP ${response.status})`);
         const sample = deserializeSample(await response.json());
         setTitle(sample.title);
@@ -132,7 +155,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [isSample, records]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isSample, sampleDef, records]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- データ準備(結合抽出 → 埋め込み → codebook → 候補辺 → 初期座標) ----
   const prepare = async () => {
@@ -206,6 +229,16 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     });
   }
 
+  // 保存済み Ward 併合列を目標クラスタ数 K で切り直し、色/ラベルの安定追跡をして反映する。
+  // 併合列は不変なので K 変更は再計算不要で即時。UMAP は動かさない。K は点数で clamp。
+  const applyWardCut = useCallback((k?: number) => {
+    const lk = linkageRef.current;
+    if (!lk || lk.n !== activeLenRef.current) return;
+    const kk = Math.max(2, Math.min(k ?? clusterKRef.current, lk.n));
+    const communities = cutWardToK(lk.a, lk.b, lk.n, kk);
+    setAssignment(trackClusters(communities, assignmentRef.current));
+  }, []);
+
   // ---- レイアウト Worker ----
   const startLayout = (
     initial: Coords,
@@ -215,19 +248,26 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     topicConditioned = false,
   ) => {
     layoutWorkerRef.current?.terminate();
+    linkageRef.current = null; // レイアウトを作り直すので古い併合列は破棄
     const worker = new Worker(new URL("../phase2/workers/layout.worker.ts", import.meta.url), { type: "module" });
     layoutWorkerRef.current = worker;
     let pending: Coords | null = null;
     let rafScheduled = false;
     worker.onmessage = (event) => {
-      if (event.data.type !== "coords") return;
-      pending = { x: event.data.x, y: event.data.y };
-      if (!rafScheduled) {
-        rafScheduled = true;
-        requestAnimationFrame(() => {
-          rafScheduled = false;
-          if (pending) setCoords(pending);
-        });
+      const msg = event.data;
+      if (msg.type === "coords") {
+        pending = { x: msg.x, y: msg.y };
+        if (!rafScheduled) {
+          rafScheduled = true;
+          requestAnimationFrame(() => {
+            rafScheduled = false;
+            if (pending) setCoords(pending);
+          });
+        }
+      } else if (msg.type === "linkage") {
+        // 収束時: Ward 併合列を受け取り、現在の K で切ってクラスタを更新する
+        linkageRef.current = { a: msg.a, b: msg.b, n: msg.n };
+        applyWardCut();
       }
     };
     worker.postMessage({ type: "init", x: initial.x, y: initial.y });
@@ -252,7 +292,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     [attributeInfos],
   );
 
-  // ---- 再クラスタリング(スライダー操作時。LLM は呼ばない) ----
+  // ---- レイアウト再加熱(スライダー操作時。LLM は呼ばない) ----
+  // クラスタリングはレイアウト収束時に Ward 併合列を K 本カットして行うため、ここでは重みを
+  // 更新して UMAP を組み直すだけ(収束すると Worker が併合列を返し、applyWardCut が走る)。
   const recluster = useCallback(
     (
       recs: OpinionRecord[],
@@ -265,14 +307,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       const membership = current?.labels ?? null;
       const attrSims = nextView.attributeWeight > 0 ? attributeSimsFor(nextView.attributeKey, recs, edgeSet) : null;
       const weights = computeEdgeWeights(edgeSet, nextView, membership, attrSims, topicConditioned);
-      const communities = clusterByLouvain(recs.length, edgeSet, weights, nextView, membership);
-      const frozen =
-        nextView.selectedClusterId !== null && membership !== null
-          ? membership.map((label) => label !== nextView.selectedClusterId)
-          : undefined;
-      const tracked = trackClusters(communities, current, frozen);
-      setAssignment(tracked);
 
+      // 再加熱するので古い併合列を無効化(収束前に K を動かしても古い配置で切らない)
+      linkageRef.current = null;
       const layoutWorker = worker ?? layoutWorkerRef.current;
       layoutWorker?.postMessage({
         type: "edges",
@@ -306,26 +343,17 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     );
   };
 
-  // 現在の 2D 配置からクラスタを切り直す(UMAP が視覚的に分離した塊とクラスタ色を一致させる)。
-  // 通常の再クラスタリングは特徴グラフに対する Louvain なので、見た目の分離とはずれることがある
-  const reclusterFromLayout = () => {
-    const current = coordsRef.current;
-    if (!activeRecords || !current || current.x.length !== activeRecords.length) return;
-    const communities = clusterByLayout(current.x, current.y, view.resolution);
-    setAssignment(trackClusters(communities, assignmentRef.current));
+  // 今すぐ現在の配置から切り直す: Worker に Ward 併合列の再計算を要求する
+  // (通常はレイアウト収束時に自動で走る。手動で今の見た目に合わせたいとき用)。
+  const requestReclusterNow = () => {
+    layoutWorkerRef.current?.postMessage({ type: "computeLinkage" });
   };
 
-  // 「見た目で切り直す」の自動実行: レイアウト座標が更新されるたびに(スロットルして)
-  // 現在の 2D 配置でクラスタを切り直す。トグルオフで従来どおり手動のみ。
-  useEffect(() => {
-    if (!autoLayoutCluster || !coords || !activeRecords) return;
-    if (coords.x.length !== activeRecords.length) return;
-    const now = performance.now();
-    if (now - autoReclusterAtRef.current < 350) return;
-    autoReclusterAtRef.current = now;
-    const communities = clusterByLayout(coords.x, coords.y, view.resolution);
-    setAssignment(trackClusters(communities, assignmentRef.current));
-  }, [coords, autoLayoutCluster, activeRecords, view.resolution]);
+  // クラスタ数 K の変更: 保存済み Ward 併合列を切り直すだけ(UMAP 再実行なし・即時)。
+  const setClusterK = (k: number) => {
+    setView((v) => ({ ...v, clusterK: k }));
+    applyWardCut(k);
+  };
 
   // ---- トピック絞り込み(ドリルダウン) ----
   const coordsRef = useRef<Coords | null>(null);
@@ -446,21 +474,38 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       list.push(i);
       byLabel.set(label, list);
     });
+    // 上位N件の制限は設けず、3件以上の全クラスタを対象にする(色付けと hull/ラベルを一致させる)。
+    // summarizeCluster の総コストは全点の走査 O(N) 相当なのでクラスタ数が増えても重くならない。
     return [...byLabel.entries()]
       .filter(([, members]) => members.length >= 3)
       .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, 30)
-      .map(([clusterId, members]) => ({ clusterId, members, ...summarizeCluster(members, activeRecords, codebook) }));
+      .map(([clusterId, members]) => ({
+        clusterId,
+        members,
+        // 構成ハッシュ(所属意見id集合)。LLM ラベルはこれで引くので、再クラスタで中身が
+        // 変わったクラスタは(clusterId を引き継いでも)古いラベルを表示しない。
+        hash: fnv1a([...members.map((i) => activeRecords[i].id)].sort().join(" ")),
+        ...summarizeCluster(members, activeRecords, codebook),
+      }));
   }, [activeRecords, codebook, assignment]);
 
   // ---- 散布図 ----
+  // 色付けは全クラスタ対象(サイズ降順にパレットを循環)。表示ラベル/一覧は上位に絞るが、
+  // 色は全点に配ることで「上位30から漏れた点がグレーになる」問題を防ぐ。
+  // サマリ計算(summarizeCluster)は重いので、色付けはラベル集計だけの軽量パスにする。
   const colorByCluster = useMemo(() => {
     const map = new Map<string, string>();
-    clusterSummaries.forEach((summary, index) => {
-      map.set(summary.clusterId, SOFT_COLORS[index % SOFT_COLORS.length]);
-    });
+    if (!assignment) return map;
+    const counts = new Map<string, number>();
+    for (const label of assignment.labels) {
+      if (label === null) continue;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([clusterId], index) => map.set(clusterId, SOFT_COLORS[index % SOFT_COLORS.length]));
     return map;
-  }, [clusterSummaries]);
+  }, [assignment]);
 
   // 属性色分け: 数値はグラデーション、カテゴリカルはパレット
   const attributeColors = useMemo(() => {
@@ -509,7 +554,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
           type: "scatter",
           hoveron: "fills",
           hoverinfo: "text",
-          text: summary.label,
+          text: llmLabels.get(summary.hash)?.label ?? summary.label,
           hoverlabel: { bgcolor: color, bordercolor: color, font: { color: "white", size: 13 } },
           showlegend: false,
         });
@@ -547,11 +592,13 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     view.selectedClusterId,
     showHull,
     clusterSummaries,
+    llmLabels,
   ]);
 
   const annotations = useMemo(() => {
     if (!coords) return [];
-    return clusterSummaries.slice(0, 12).map((summary) => {
+    // 全クラスタ(3件以上)にラベルを出す。密集部は重なるが、上限で隠すより網羅性を優先。
+    return clusterSummaries.map((summary) => {
       let cx = 0;
       let cy = 0;
       for (const i of summary.members) {
@@ -564,7 +611,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       return {
         x: cx,
         y: cy,
-        text: wrapLabelText(summary.label, 12, 180),
+        text: wrapLabelText(llmLabels.get(summary.hash)?.label ?? summary.label, 12, 180),
         showarrow: false,
         font: { color: "white", size: 12 },
         bgcolor: `${color}cc`,
@@ -572,22 +619,21 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         align: "left" as const,
       };
     });
-  }, [clusterSummaries, coords, colorByCluster]);
+  }, [clusterSummaries, coords, colorByCluster, llmLabels]);
 
   // ---- クラスタ選択(focus+context) ----
   const selectCluster = (clusterId: string | null) => {
     setExplanation(null);
-    // スタンス/理由が効いているときだけ、選択で辺の重みが変わる(focus+context)ため
-    // 再クラスタリング=レイアウト再加熱を行う。効いていないときは選択ハイライトのみで、
-    // レイアウト(UMAP)は動かさない(無駄な再実行を避ける)。
-    if (view.stanceWeight > 0 || view.reasonWeight > 0) {
-      updateView({
-        selectedClusterId: clusterId,
-        ...(clusterId === null ? { stanceWeight: 0, reasonWeight: 0 } : {}),
-      });
-    } else {
-      setView((v) => ({ ...v, selectedClusterId: clusterId }));
-    }
+    // クリックは選択ハイライトのみ(UMAP は動かさない)。stance/理由を選択クラスタ内に
+    // 適用して分裂させるのは、明示ボタン「選択クラスタを分裂」で行う。
+    setView((v) => ({ ...v, selectedClusterId: clusterId }));
+  };
+
+  // focus+context の明示適用: 現在の view(選択クラスタ + stance/理由の重み)でレイアウトを
+  // 組み直し、選択クラスタ内を分裂させる。スライダー操作と違い、クリックでは起きない。
+  const applyFocusSplit = () => {
+    if (!activeRecords || !activeEdges) return;
+    recluster(activeRecords, activeEdges, view, assignmentRef.current, null, scope !== null);
   };
 
   // ---- LLM 解説(オンデマンド・構成ハッシュでキャッシュ) ----
@@ -597,7 +643,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     setExplaining(true);
     try {
       const checkpoints = dexieCheckpoints(checkpointsId);
-      const compositionKey = fnv1a(summary.members.map((i) => activeRecords[i].id).join(" "));
+      const compositionKey = summary.hash;
       const cached = await checkpoints.getChunk("phase2-explain", compositionKey);
       if (typeof cached === "string") {
         setExplanation({ clusterId, text: cached });
@@ -630,6 +676,69 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setExplaining(false);
+    }
+  };
+
+  // ---- LLM ラベル生成(ボタンで現在ビューの全クラスタを命名。クラスタごとに1コール) ----
+  // 構成ハッシュ(所属id集合)でキャッシュするので、同じ切り方に戻れば無料で再利用。
+  const generateLlmLabels = async () => {
+    if (!activeRecords || !chatEndpoint.baseUrl || clusterSummaries.length === 0) return;
+    setLabeling(true);
+    setError(null);
+    const checkpoints = dexieCheckpoints(checkpointsId);
+    const concurrency = isSample || !project ? 8 : project.settingsSnapshot.concurrency;
+    const semaphore = new Semaphore(concurrency);
+    const total = clusterSummaries.length;
+    let done = 0;
+    setStatus(`LLM ラベル生成 0/${total}`);
+    try {
+      await Promise.all(
+        clusterSummaries.map((summary) =>
+          semaphore.run(async () => {
+            const key = summary.hash;
+            let result = (await checkpoints.getChunk("phase2-label", key)) as
+              | { label: string; description: string }
+              | undefined;
+            if (!result || typeof result.label !== "string") {
+              const stanceText = Object.entries(summary.stanceMix)
+                .map(([k, count]) => `${STANCE_LABEL_JA[k as keyof typeof STANCE_LABEL_JA]}: ${count}件`)
+                .join(", ");
+              const input = [
+                `クラスタ件数: ${summary.size}`,
+                `上位トピック: ${summary.topTopics.map((t) => t.label).join(", ")}`,
+                `stance 分布: ${stanceText}`,
+                `上位論点: ${summary.topReasons.map((r) => r.label).join(", ")}`,
+                "代表的な意見:",
+                ...summary.representatives.map((i) => `- ${activeRecords[i].claimText}`),
+              ].join("\n");
+              const response = await requestChat(chatEndpoint, {
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      'あなたは意見分析の専門家です。以下の意見クラスタに、内容を的確に表す短いラベル(label, 15字程度)と、特徴を2〜3文でまとめた説明(description)を付けてください。ラベルは具体的にし、「多様な意見」のような抽象的・汎用的な名称は避け、他のクラスタと区別できる名称にしてください。立場の内訳(賛成/条件付き/非反対など)の違いにも注意してください。出力は {"label": "...", "description": "..."} の JSON のみ。',
+                  },
+                  { role: "user", content: input },
+                ],
+              });
+              const parsed = parseLabelResponse(response);
+              result = parsed
+                ? { label: parsed.label, description: parsed.description }
+                : { label: summary.label, description: "" };
+              await checkpoints.putChunk("phase2-label", key, result);
+            }
+            const value = result;
+            setLlmLabels((m) => new Map(m).set(key, value));
+            done++;
+            setStatus(`LLM ラベル生成 ${done}/${total}`);
+          }),
+        ),
+      );
+      setStatus("LLM ラベル生成 完了");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLabeling(false);
     }
   };
 
@@ -847,14 +956,22 @@ export function Phase2Page({ projectId }: { projectId: string }) {
               <b style={{ minWidth: 110 }} title="近さ(重み)の定義は変えず、クラスタの切り方と見せ方だけを調整します">
                 クラスタと表示
               </b>
-              <Slider
-                label="解像度"
-                value={view.resolution}
-                min={0.4}
-                max={2.5}
-                hint="Louvain クラスタリングの resolution パラメータ。配置には影響せず、クラスタの切り方だけが変わります(上げる=細かく多く、下げる=粗く少なく)"
-                onChange={(v) => updateView({ resolution: v })}
-              />
+              <label
+                style={{ fontWeight: 400, margin: 0 }}
+                title="クラスタ数。レイアウト収束時に作った連結制約付き Ward の樹形図を、ちょうどこの数のクラスタで切ります。UMAP は再実行せず即座に切り直します"
+              >
+                クラスタ数: {view.clusterK ?? DEFAULT_VIEW.clusterK}
+                <br />
+                <input
+                  type="range"
+                  min={2}
+                  max={Math.min(40, Math.max(2, activeRecords?.length ?? 40))}
+                  step={1}
+                  value={view.clusterK ?? DEFAULT_VIEW.clusterK}
+                  onChange={(e) => setClusterK(Number(e.target.value))}
+                  style={{ width: 130 }}
+                />
+              </label>
               <Slider
                 label="辺しきい値"
                 value={view.edgeThreshold}
@@ -901,24 +1018,20 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   </select>
                 </label>
               )}
-              <label
-                style={{ fontWeight: 400, margin: 0 }}
-                title="レイアウトが動くたびに、現在の配置でクラスタを自動的に切り直します(粒度は「解像度」に従う)。重い場合はオフにして手動ボタンで切り直してください"
-              >
-                <input
-                  type="checkbox"
-                  style={{ width: "auto", marginRight: 4 }}
-                  checked={autoLayoutCluster}
-                  onChange={(e) => setAutoLayoutCluster(e.target.checked)}
-                />
-                見た目で自動追従
-              </label>
               <button
                 type="button"
-                onClick={reclusterFromLayout}
-                title="現在の配置(2D座標)の近さでクラスタを切り直します。通常のクラスタリングは特徴グラフに対して自動で走りますが、レイアウトが視覚的に分離した塊を1クラスタのまま残すことがあるため、見た目とクラスタ色・ラベルを一致させたいときに押してください。粒度は「解像度」に従います"
+                onClick={requestReclusterNow}
+                title="現在の配置から今すぐクラスタを切り直します(Ward 併合列を再構築)。通常はレイアウトが収束したときに自動で切り直されるので、手動での実行は任意です"
               >
-                見た目で切り直す
+                今すぐ切り直す
+              </button>
+              <button
+                type="button"
+                onClick={generateLlmLabels}
+                disabled={labeling || !chatEndpoint.baseUrl || clusterSummaries.length === 0}
+                title="現在のクラスタごとに LLM でラベルと説明文を生成します(クラスタ毎に1コール・構成ハッシュでキャッシュ)。押すたびに現在の切り方に対して生成/再利用します"
+              >
+                {labeling ? "ラベル生成中..." : "LLMでラベル生成"}
               </button>
               <button
                 type="button"
@@ -953,8 +1066,27 @@ export function Phase2Page({ projectId }: { projectId: string }) {
               </p>
             ) : (
               <p className="note">
-                選択中: <b>{clusterSummaries.find((s) => s.clusterId === view.selectedClusterId)?.label}</b> —
-                スタンス/理由スライダーでこのクラスタが分裂します。{" "}
+                選択中:{" "}
+                <b>
+                  {(() => {
+                    const s = clusterSummaries.find((c) => c.clusterId === view.selectedClusterId);
+                    return (s && llmLabels.get(s.hash)?.label) ?? s?.label;
+                  })()}
+                </b>{" "}
+                — スタンス/理由を上げて「分裂」を押すと、このクラスタ内が賛否・理由で分かれます。{" "}
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={applyFocusSplit}
+                  disabled={view.stanceWeight === 0 && view.reasonWeight === 0}
+                  title={
+                    view.stanceWeight === 0 && view.reasonWeight === 0
+                      ? "先にスタンスか理由の重みを上げてください"
+                      : "現在のスタンス/理由の重みを選択クラスタ内に適用してレイアウトを組み直します"
+                  }
+                >
+                  選択クラスタを分裂
+                </button>{" "}
                 <button type="button" onClick={() => selectCluster(null)}>
                   選択解除
                 </button>{" "}
@@ -978,6 +1110,15 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                 </button>
               </p>
             )}
+            {/* 選択クラスタの LLM 説明(あれば全文表示) */}
+            {view.selectedClusterId !== null &&
+              (() => {
+                const s = clusterSummaries.find((c) => c.clusterId === view.selectedClusterId);
+                const desc = s && llmLabels.get(s.hash)?.description;
+                return desc ? (
+                  <p style={{ whiteSpace: "pre-wrap", background: "#f8fafc", padding: 8, borderRadius: 8 }}>{desc}</p>
+                ) : null;
+              })()}
             {explanation && explanation.clusterId === view.selectedClusterId && (
               <p style={{ whiteSpace: "pre-wrap", background: "#f8fafc", padding: 8, borderRadius: 8 }}>
                 {explanation.text}
@@ -1020,16 +1161,22 @@ export function Phase2Page({ projectId }: { projectId: string }) {
                   onClick={() => selectCluster(view.selectedClusterId === summary.clusterId ? null : summary.clusterId)}
                 >
                   <h3>
-                    <span style={{ color: colorByCluster.get(summary.clusterId) }}>●</span> {summary.label}
+                    <span style={{ color: colorByCluster.get(summary.clusterId) }}>●</span>{" "}
+                    {llmLabels.get(summary.hash)?.label ?? summary.label}
                   </h3>
                   <p className="cluster-value">{summary.size} 件</p>
-                  <p className="cluster-takeaway">
-                    {activeRecords &&
-                      summary.representatives
-                        .slice(0, 2)
-                        .map((i) => activeRecords[i].claimText)
-                        .join(" / ")}
-                  </p>
+                  {llmLabels.get(summary.hash)?.description ? (
+                    // LLM 説明があるときは全文表示し、代表意見(重複気味)は省く
+                    <p className="cluster-desc">{llmLabels.get(summary.hash)?.description}</p>
+                  ) : (
+                    <p className="cluster-takeaway">
+                      {activeRecords &&
+                        summary.representatives
+                          .slice(0, 2)
+                          .map((i) => activeRecords[i].claimText)
+                          .join(" / ")}
+                    </p>
+                  )}
                 </button>
               ))}
             </div>
@@ -1112,16 +1259,15 @@ export function Phase2Home() {
             データを取り込む
           </button>
         </div>
-        <div className="card" style={{ flex: 1, minWidth: 260 }}>
-          <h3>サンプルで試す(分析の実行不要)</h3>
-          <p className="note">
-            AI人権法案への意見 150 コメント(543意見)を事前分析済み。API
-            キーなしでスライダー操作・クラスタ分裂を体験できます。
-          </p>
-          <button type="button" onClick={() => navigate("/phase2/sample")}>
-            サンプルを開く
-          </button>
-        </div>
+        {PHASE2_SAMPLES.map((s) => (
+          <div key={s.id} className="card" style={{ flex: 1, minWidth: 260 }}>
+            <h3>サンプル: {s.title}</h3>
+            <p className="note">事前分析済み(分析の実行不要)。{s.note}</p>
+            <button type="button" onClick={() => navigate(`/phase2/${s.id}`)}>
+              サンプルを開く
+            </button>
+          </div>
+        ))}
       </div>
       {(!projects || projects.length === 0) && (
         <p className="note" style={{ marginTop: 12 }}>

@@ -88,6 +88,8 @@ export type ClusterView = {
   reasonWeight: number;
   edgeThreshold: number;
   resolution: number;
+  /** 目標クラスタ数(レイアウト収束時の連結制約付き Ward 樹形図をこの数で切る) */
+  clusterK: number;
   stanceAxisEnabled: boolean;
   /** focus+context: 選択クラスタ内のみ stance/reason 重みを適用する(必須制約) */
   selectedClusterId: string | null;
@@ -105,6 +107,7 @@ export const DEFAULT_VIEW: ClusterView = {
   reasonWeight: 0.0,
   edgeThreshold: 0.25,
   resolution: 1.0,
+  clusterK: 8,
   stanceAxisEnabled: false,
   selectedClusterId: null,
   attributeKey: null,
