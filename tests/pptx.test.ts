@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clusterLevels,
+  fitRect,
   MAX_PAGES_PER_LEVEL,
   paginate,
   planClusterPages,
@@ -111,5 +112,42 @@ describe("paginate", () => {
 
   it("perPage が 0 以下なら空を返す(無限ループしない)", () => {
     expect(paginate([1, 2], 0)).toEqual([]);
+  });
+});
+
+describe("fitRect(枠内中央配置)", () => {
+  const box = { x: 1, y: 1, w: 8, h: 4 };
+
+  it("4:3 の横長画像は高さ基準で収まり、水平中央に置かれる", () => {
+    const r = fitRect(1280, 960, box);
+    // h=4 に合わせて w = 4 * 4/3 ≈ 5.333
+    expect(r.h).toBeCloseTo(4);
+    expect(r.w).toBeCloseTo(16 / 3);
+    expect(r.x).toBeCloseTo(1 + (8 - 16 / 3) / 2);
+    expect(r.y).toBeCloseTo(1);
+  });
+
+  it("正方形(旧生成)は高さ基準で収まる", () => {
+    const r = fitRect(1024, 1024, box);
+    expect(r.w).toBeCloseTo(4);
+    expect(r.h).toBeCloseTo(4);
+    expect(r.x).toBeCloseTo(1 + 2);
+  });
+
+  it("横に極端に長い画像は幅基準で収まり、垂直中央に置かれる", () => {
+    const r = fitRect(4000, 500, box);
+    expect(r.w).toBeCloseTo(8);
+    expect(r.h).toBeCloseTo(1);
+    expect(r.y).toBeCloseTo(1 + 1.5);
+  });
+
+  it("枠より小さい画像は拡大されて収まる(スライドでは常に枠いっぱいを使う)", () => {
+    const r = fitRect(4, 3, box);
+    expect(r.h).toBeCloseTo(4);
+    expect(r.w).toBeCloseTo(16 / 3);
+  });
+
+  it("寸法が不明(0)なら枠をそのまま返す", () => {
+    expect(fitRect(0, 0, box)).toEqual(box);
   });
 });

@@ -96,6 +96,21 @@ export function paginate<T>(items: readonly T[], perPage: number): T[][] {
   return pages;
 }
 
+export type Rect = { x: number; y: number; w: number; h: number };
+
+/**
+ * 画像(imgW×imgH)をアスペクト比を保ったまま枠 box に収め、中央に配置した矩形を返す。
+ * pptxgenjs の sizing contain は縮小はするが枠内での中央寄せをしないため、
+ * 実寸から自前で計算する。寸法が不明(0 以下)なら枠をそのまま返す。
+ */
+export function fitRect(imgW: number, imgH: number, box: Rect): Rect {
+  if (imgW <= 0 || imgH <= 0 || box.w <= 0 || box.h <= 0) return { ...box };
+  const scale = Math.min(box.w / imgW, box.h / imgH);
+  const w = imgW * scale;
+  const h = imgH * scale;
+  return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
+}
+
 // ---- スライド生成 ------------------------------------------------------
 
 /** Blob を base64 データ URL へ変換する */
@@ -106,6 +121,33 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * 画像の実寸(px)を読む。ポンチ絵は 4:3(gpt-image-2)だが、旧生成の 1:1 や
+ * gpt-image-1 系フォールバックの 3:2 が保存されていることもあるため、
+ * 前提を置かず実寸から配置を計算する。読めなければ 4:3 とみなす。
+ */
+async function imageDims(blob: Blob): Promise<{ w: number; h: number }> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const dims = { w: bitmap.width, h: bitmap.height };
+    bitmap.close();
+    return dims;
+  } catch {
+    return { w: 4, h: 3 };
+  }
+}
+
+/** 画像 Blob を枠内に中央配置でスライドへ追加する */
+async function addImageContained(
+  slide: { addImage: (opts: Record<string, unknown>) => unknown },
+  blob: Blob,
+  box: Rect,
+): Promise<void> {
+  const dims = await imageDims(blob);
+  const rect = fitRect(dims.w, dims.h, box);
+  slide.addImage({ data: await blobToDataUrl(blob), ...rect });
 }
 
 // 色定数
@@ -154,43 +196,47 @@ export async function exportPptx(result: Result, images: PptxImages = {}): Promi
     const slide = pptx.addSlide();
     slide.background = { color: COLOR_BG };
 
-    // ポンチ絵がある場合は右側に配置し、テキストは左半分に寄せる
+    // ポンチ絵(4:3 横長)がある場合は右側を広く取って主役にし、テキストは左の細い列へ。
+    // 旧生成の 1:1 等が保存されていても、実寸を読んで枠内中央に収まる(addImageContained)
     const hasImage = !!ponchie;
-    const textWidth = hasImage ? 5.1 : CONTENT_W;
+    const textWidth = hasImage ? 3.95 : CONTENT_W;
 
     slide.addText(title, {
       x: MARGIN_X,
-      y: 1.4,
+      y: 1.0,
       w: textWidth,
-      h: 1.3,
-      fontSize: 30,
+      h: 1.5,
+      fontSize: hasImage ? 24 : 30,
       bold: true,
       color: COLOR_TITLE,
       wrap: true,
       fit: "shrink",
+      valign: "top",
     });
 
     if (question) {
       slide.addText(truncate(question, MAX_QUESTION_CHARS), {
         x: MARGIN_X,
-        y: 2.9,
+        y: 2.7,
         w: textWidth,
-        h: 0.9,
-        fontSize: 14,
+        h: 1.0,
+        fontSize: 13,
         color: COLOR_BODY,
         wrap: true,
         fit: "shrink",
+        valign: "top",
       });
     }
 
     // 統計情報
     slide.addText(`コメント数: ${commentNum.toLocaleString()} 件 / 意見数: ${argNum.toLocaleString()} 件`, {
       x: MARGIN_X,
-      y: 4.0,
+      y: 3.95,
       w: textWidth,
       h: 0.4,
-      fontSize: 12,
+      fontSize: 11,
       color: COLOR_MUTED,
+      fit: "shrink",
     });
 
     // 生成元バッジ
@@ -213,19 +259,9 @@ export async function exportPptx(result: Result, images: PptxImages = {}): Promi
       valign: "middle",
     });
 
-    if (hasImage && ponchie) {
-      const dataUrl = await blobToDataUrl(ponchie);
-      // contain でアスペクト比を保つ(正方形とは限らない)
-      const imgW = 4.1;
-      const imgH = 4.425;
-      slide.addImage({
-        data: dataUrl,
-        x: PAGE_W - MARGIN_X - imgW,
-        y: 0.6,
-        w: imgW,
-        h: imgH,
-        sizing: { type: "contain", w: imgW, h: imgH },
-      });
+    if (ponchie) {
+      // 右側の枠: テキスト列(右端 4.25)との間に 0.3 のギャップ。4:3 なら 5.15x3.86 で収まる
+      await addImageContained(slide, ponchie, { x: 4.55, y: 0.55, w: PAGE_W - MARGIN_X - 4.55, h: PAGE_H - 1.1 });
     }
   }
 
@@ -287,18 +323,8 @@ export async function exportPptx(result: Result, images: PptxImages = {}): Promi
     const slide = pptx.addSlide();
     slide.background = { color: COLOR_BG };
     addHeading(slide, "意見の分布(散布図)");
-    const dataUrl = await blobToDataUrl(chart);
-    // 見出し(下端 1.1)の下いっぱいに contain で収める(キャプチャは 4:3)
-    const imgY = 1.25;
-    const imgH = PAGE_H - imgY - 0.2;
-    slide.addImage({
-      data: dataUrl,
-      x: MARGIN_X,
-      y: imgY,
-      w: CONTENT_W,
-      h: imgH,
-      sizing: { type: "contain", w: CONTENT_W, h: imgH },
-    });
+    // 見出し(下端 1.1)の下の領域に、実寸から中央配置で収める(キャプチャは 4:3)
+    await addImageContained(slide, chart, { x: MARGIN_X, y: 1.25, w: CONTENT_W, h: PAGE_H - 1.25 - 0.2 });
   }
 
   // ─── スライド 4〜N: クラスタ一覧(階層ごと) ─────────────────────────
