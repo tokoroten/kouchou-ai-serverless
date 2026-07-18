@@ -229,6 +229,51 @@ table.preview-table {
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
 }
+
+/* 広い画面では 左=チャート / 右=全体解説+クラスタ解説 の2カラムにする。
+   狭い画面では .viewer-main はただのブロックなので従来の縦積みのまま。 */
+@media (min-width: 1200px) {
+  /* ビューアを含むページは画面の横幅いっぱいまで使う(他ページは 1100px のまま) */
+  .container:has(.viewer) {
+    max-width: none;
+  }
+  /* 階層リストは1カラムのまま。全幅だと1行が長すぎて読みにくいので幅を抑える */
+  .viewer-main.single {
+    max-width: 1100px;
+  }
+  .viewer-main:not(.single) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 32%);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "chart overview"
+      "chart side";
+    gap: 16px;
+    align-items: start;
+  }
+  .viewer-main:not(.single) .viewer-overview {
+    grid-area: overview;
+    margin-top: 0;
+  }
+  .viewer-main:not(.single) .viewer-primary {
+    grid-area: chart;
+    /* 右カラムを読み進めてもチャートが見えたままになるよう追従させる */
+    position: sticky;
+    top: 12px;
+  }
+  .viewer-main:not(.single) .viewer-side {
+    grid-area: side;
+    min-width: 0;
+  }
+  /* 縦長の右カラムに1枚ずつ並べる */
+  .viewer-main:not(.single) .cluster-grid {
+    grid-template-columns: 1fr;
+  }
+  .viewer-main:not(.single) .viewer-chart {
+    /* ビューポート高に追従(ヘッダ/タブ/フィルタ分を差し引く) */
+    height: clamp(480px, calc(100vh - 150px), 900px);
+  }
+}
 .cluster-card {
   text-align: left;
   padding: 12px 16px;

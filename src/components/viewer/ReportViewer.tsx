@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Cluster, Result } from "../../types/result";
+import type { Result } from "../../types/result";
 import {
   AttributeFilter,
   computeAttributeMetas,
@@ -41,17 +41,6 @@ export function ReportViewer({ result }: Props) {
   const attributeMetas = useMemo(() => computeAttributeMetas(result.arguments), [result]);
   const filteredIds = useMemo(() => filterArgumentIds(result.arguments, filter), [result, filter]);
 
-  const selectedCluster: Cluster | undefined = useMemo(
-    () => result.clusters.find((c) => c.id === selectedClusterId),
-    [result, selectedClusterId],
-  );
-  const selectedArguments = useMemo(() => {
-    if (!selectedClusterId) return [];
-    return result.arguments.filter(
-      (arg) => arg.cluster_ids.includes(selectedClusterId) && (!filteredIds || filteredIds.has(arg.arg_id)),
-    );
-  }, [result, selectedClusterId, filteredIds]);
-
   const clustersAtLevel = useMemo(
     () => result.clusters.filter((c) => c.level === (tab === "density" ? deepestLevel : scatterLevel)),
     [result, tab, scatterLevel, deepestLevel],
@@ -82,17 +71,6 @@ export function ReportViewer({ result }: Props) {
         <h1>{result.config?.name || "レポート"}</h1>
         {result.config?.question && <p className="viewer-question">{result.config.question}</p>}
       </header>
-
-      {(result.overview || result.config?.intro) && (
-        <section className="viewer-overview card">
-          {result.config?.intro && <p style={{ whiteSpace: "pre-wrap" }}>{result.config.intro}</p>}
-          <h2>概要</h2>
-          <p style={{ whiteSpace: "pre-wrap" }}>{result.overview}</p>
-          <p className="viewer-meta">
-            コメント数 {result.comment_num.toLocaleString()} 件 / 意見数 {result.arguments.length.toLocaleString()} 件
-          </p>
-        </section>
-      )}
 
       <nav className="viewer-tabs">
         <button type="button" className={tab === "scatter" ? "active" : ""} onClick={() => setTab("scatter")}>
@@ -147,97 +125,91 @@ export function ReportViewer({ result }: Props) {
         </p>
       )}
 
-      {tab !== "hierarchy" ? (
-        <div className="viewer-chart">
-          {tab === "scatter" && (
-            <ScatterChart
-              clusterList={result.clusters}
-              argumentList={result.arguments}
-              targetLevel={scatterLevel}
-              filteredArgumentIds={filteredIds}
-              showClusterLabels={showLabels}
-              showConvexHull={showHull}
-              onPointClick={(argId) => selectClusterFromPoint(argId, scatterLevel)}
-            />
-          )}
-          {tab === "density" && (
-            <ScatterChart
-              clusterList={result.clusters}
-              argumentList={result.arguments}
-              targetLevel={deepestLevel}
-              densityFilter={{ maxPercentile: 0.3, minValue: 3 }}
-              filteredArgumentIds={filteredIds}
-              showClusterLabels={showLabels}
-              showConvexHull={showHull}
-              onPointClick={(argId) => selectClusterFromPoint(argId, deepestLevel)}
-            />
-          )}
-          {tab === "treemap" && (
-            <TreemapChart
-              clusterList={result.clusters}
-              argumentList={result.arguments}
-              level={treemapLevel}
-              onTreeZoom={setTreemapLevel}
-              filteredArgumentIds={filteredIds}
-            />
-          )}
-        </div>
-      ) : (
-        <HierarchyList
-          clusterList={result.clusters}
-          argumentList={result.arguments}
-          filteredArgumentIds={filteredIds ?? undefined}
-        />
-      )}
+      {/* 画面が十分に広いときは 左=チャート / 右=全体解説+クラスタ解説 の2カラム(styles.css の @media)。
+          狭いときは従来どおり 概要 → チャート → クラスタ一覧 の縦積みになる。 */}
+      <div className={`viewer-main${tab === "hierarchy" ? " single" : ""}`}>
+        {(result.overview || result.config?.intro) && (
+          <section className="viewer-overview card">
+            {result.config?.intro && <p style={{ whiteSpace: "pre-wrap" }}>{result.config.intro}</p>}
+            <h2>概要</h2>
+            <p style={{ whiteSpace: "pre-wrap" }}>{result.overview}</p>
+            <p className="viewer-meta">
+              コメント数 {result.comment_num.toLocaleString()} 件 / 意見数 {result.arguments.length.toLocaleString()} 件
+            </p>
+          </section>
+        )}
 
-      {tab !== "hierarchy" && (
-        <section className="viewer-clusters">
-          <h2>意見グループ一覧</h2>
-          <div className="cluster-grid">
-            {clustersAtLevel.map((cluster) => (
-              <button
-                type="button"
-                key={cluster.id}
-                className={`cluster-card ${selectedClusterId === cluster.id ? "selected" : ""}`}
-                onClick={() => setSelectedClusterId(cluster.id === selectedClusterId ? null : cluster.id)}
-              >
-                <h3>{cluster.label}</h3>
-                <p className="cluster-value">
-                  {filteredCountByCluster
-                    ? `${(filteredCountByCluster.get(cluster.id) ?? 0).toLocaleString()} / ${cluster.value.toLocaleString()} 件 (フィルタ後)`
-                    : `${cluster.value.toLocaleString()} 件`}
-                </p>
-                <p className="cluster-takeaway">{cluster.takeaway}</p>
-              </button>
-            ))}
+        {tab !== "hierarchy" ? (
+          <div className="viewer-primary">
+            <div className="viewer-chart">
+              {tab === "scatter" && (
+                <ScatterChart
+                  clusterList={result.clusters}
+                  argumentList={result.arguments}
+                  targetLevel={scatterLevel}
+                  filteredArgumentIds={filteredIds}
+                  showClusterLabels={showLabels}
+                  showConvexHull={showHull}
+                  onPointClick={(argId) => selectClusterFromPoint(argId, scatterLevel)}
+                />
+              )}
+              {tab === "density" && (
+                <ScatterChart
+                  clusterList={result.clusters}
+                  argumentList={result.arguments}
+                  targetLevel={deepestLevel}
+                  densityFilter={{ maxPercentile: 0.3, minValue: 3 }}
+                  filteredArgumentIds={filteredIds}
+                  showClusterLabels={showLabels}
+                  showConvexHull={showHull}
+                  onPointClick={(argId) => selectClusterFromPoint(argId, deepestLevel)}
+                />
+              )}
+              {tab === "treemap" && (
+                <TreemapChart
+                  clusterList={result.clusters}
+                  argumentList={result.arguments}
+                  level={treemapLevel}
+                  onTreeZoom={setTreemapLevel}
+                  filteredArgumentIds={filteredIds}
+                />
+              )}
+            </div>
           </div>
-        </section>
-      )}
+        ) : (
+          <HierarchyList
+            clusterList={result.clusters}
+            argumentList={result.arguments}
+            filteredArgumentIds={filteredIds ?? undefined}
+          />
+        )}
 
-      {selectedCluster && tab !== "hierarchy" && (
-        <section className="viewer-cluster-detail card">
-          <h2>
-            {selectedCluster.label}({selectedArguments.length} 件)
-          </h2>
-          <p>{selectedCluster.takeaway}</p>
-          <ul className="argument-list">
-            {selectedArguments.map((arg) => (
-              <li key={arg.arg_id}>
-                {arg.argument}
-                {arg.attributes && (
-                  <span className="note">
-                    {" "}
-                    —{" "}
-                    {Object.entries(arg.attributes)
-                      .map(([key, value]) => `${key}: ${value}`)
-                      .join(" / ")}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        {tab !== "hierarchy" && (
+          <div className="viewer-side">
+            <section className="viewer-clusters">
+              <h2>意見グループ一覧</h2>
+              <div className="cluster-grid">
+                {clustersAtLevel.map((cluster) => (
+                  <button
+                    type="button"
+                    key={cluster.id}
+                    className={`cluster-card ${selectedClusterId === cluster.id ? "selected" : ""}`}
+                    onClick={() => setSelectedClusterId(cluster.id === selectedClusterId ? null : cluster.id)}
+                  >
+                    <h3>{cluster.label}</h3>
+                    <p className="cluster-value">
+                      {filteredCountByCluster
+                        ? `${(filteredCountByCluster.get(cluster.id) ?? 0).toLocaleString()} / ${cluster.value.toLocaleString()} 件 (フィルタ後)`
+                        : `${cluster.value.toLocaleString()} 件`}
+                    </p>
+                    <p className="cluster-takeaway">{cluster.takeaway}</p>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
