@@ -11,7 +11,7 @@ import Papa from "papaparse";
 import { normalizeComments } from "../src/lib/csv";
 import { probeChat } from "../src/lib/llm/client";
 import type { Checkpoints } from "../src/lib/pipeline/context";
-import { type PipelineContext, memoryCheckpoints } from "../src/lib/pipeline/context";
+import { memoryCheckpoints, type PipelineContext } from "../src/lib/pipeline/context";
 import { runPipeline } from "../src/lib/pipeline/orchestrator";
 import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overviewPrompt } from "../src/prompts";
 import type { PipelineStepName, Project } from "../src/types/project";

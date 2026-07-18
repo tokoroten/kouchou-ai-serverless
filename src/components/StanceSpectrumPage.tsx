@@ -6,15 +6,15 @@ import { fnv1a } from "../lib/pipeline/clusterTable";
 import type { PipelineContext } from "../lib/pipeline/context";
 import { navigate } from "../lib/router";
 import { dexieCheckpoints } from "../lib/storage/checkpoints";
-import { db, deletePhase2ProjectData } from "../lib/storage/db";
-import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
-import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
-import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../phase2/graph";
-import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
-import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
-import { deserializeSample, serializeSample } from "../phase2/sample";
-import type { ClusterView, Codebook, OpinionRecord } from "../phase2/types";
-import { DEFAULT_VIEW, dominantStance, stanceScore } from "../phase2/types";
+import { db, deleteStanceSpectrumProjectData } from "../lib/storage/db";
+import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../stance-spectrum/attributes";
+import { type TrackedAssignment, trackClusters } from "../stance-spectrum/clusterTracker";
+import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../stance-spectrum/graph";
+import { STANCE_LABEL_JA, summarizeCluster } from "../stance-spectrum/labelTemplate";
+import { buildEdgesWithWorker, prepareStanceSpectrumRecords } from "../stance-spectrum/prepare";
+import { deserializeSample, serializeSample } from "../stance-spectrum/sample";
+import type { ClusterView, Codebook, OpinionRecord } from "../stance-spectrum/types";
+import { DEFAULT_VIEW, dominantStance, stanceScore } from "../stance-spectrum/types";
 import { useSettings } from "../store/settings";
 import type { EmbeddingResult } from "../types/project";
 import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
@@ -22,7 +22,7 @@ import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
 
-// フェーズ2: 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)。
+// 賛否スペクトラム分析: 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)。
 // - クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」
 // - スライダー操作では候補辺の再重み付けのみ(LLM は呼ばない)
 // - stance/reason は全体ビューでも使える(トピック類似度でゲート)。選択/絞り込み中はゲートを外す
@@ -32,7 +32,7 @@ import { convexHull } from "./viewer/ScatterChart";
 type Coords = { x: Float32Array; y: Float32Array };
 
 // 同梱の事前分析済みサンプル(public/ の JSON)。projectId がこの id のときサンプルモードになる。
-export const PHASE2_SAMPLES = [
+export const STANCE_SPECTRUM_SAMPLES = [
   {
     id: "sample",
     file: "sample-phase2.json",
@@ -47,8 +47,8 @@ export const PHASE2_SAMPLES = [
   },
 ] as const;
 
-export function Phase2Page({ projectId }: { projectId: string }) {
-  const sampleDef = PHASE2_SAMPLES.find((s) => s.id === projectId);
+export function StanceSpectrumPage({ projectId }: { projectId: string }) {
+  const sampleDef = STANCE_SPECTRUM_SAMPLES.find((s) => s.id === projectId);
   const isSample = !!sampleDef;
   const project = useLiveQuery(() => (isSample ? undefined : db.projects.get(projectId)), [projectId, isSample]);
   const { settings } = useSettings();
@@ -167,13 +167,16 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     setUsage({ input: 0, output: 0, total: 0 });
     try {
       const attributesByComment = new Map(project.comments.map((c) => [c.commentId, c.attributes]));
-      // 生コメントから phase2 専用の投入口で「意見抽出 + 構造化属性 + 埋め込み」をまとめて実行
+      // 生コメントから賛否スペクトラム分析専用の投入口で「意見抽出 + 構造化属性 + 埋め込み」をまとめて実行
       const {
         records: recs,
         codebook: cb,
         embedding: emb,
-      } = await preparePhase2Records(project.comments, project.prompts.extraction, ctx, (message, done, total) =>
-        setStatus(total ? `${message} ${done}/${total}` : message),
+      } = await prepareStanceSpectrumRecords(
+        project.comments,
+        project.prompts.extraction,
+        ctx,
+        (message, done, total) => setStatus(total ? `${message} ${done}/${total}` : message),
       );
       for (const record of recs) {
         record.attributes = attributesByComment.get(record.originalCommentId);
@@ -185,7 +188,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       );
       setEdges(edgeSet);
 
-      // 初期座標: phase2 隔離チェックポイントにキャッシュ(再実行時はスキップ)
+      // 初期座標: 賛否スペクトラム分析の隔離チェックポイントにキャッシュ(再実行時はスキップ)
       const { umapCheckpointKey } = await import("../lib/pipeline/steps/clustering");
       const key = umapCheckpointKey({ count: emb.argIds.length, dim: emb.dim, seed: "kouchou-ai" });
       const saved: Coords | undefined = await dexieCheckpoints(checkpointsId).getChunk("umap", key);
@@ -250,7 +253,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   ) => {
     layoutWorkerRef.current?.terminate();
     linkageRef.current = null; // レイアウトを作り直すので古い併合列は破棄
-    const worker = new Worker(new URL("../phase2/workers/layout.worker.ts", import.meta.url), { type: "module" });
+    const worker = new Worker(new URL("../stance-spectrum/workers/layout.worker.ts", import.meta.url), {
+      type: "module",
+    });
     layoutWorkerRef.current = worker;
     let pending: Coords | null = null;
     let rafScheduled = false;
@@ -802,7 +807,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」です。スライダー操作は LLM
         を呼ばず、候補グラフの再重み付けだけで点群が連続的に再編されます。スタンス/理由は全体ビューでも
         使えます(トピック類似度でゲートし、無関係な話題を賛否で混ぜません)。クラスタを選択・トピックで
-        絞ると、その範囲にそのまま効きます。 詳しい仕組みは <a href="#/phase2/about">アルゴリズム解説</a> へ。
+        絞ると、その範囲にそのまま効きます。 詳しい仕組みは <a href="#/stance-spectrum/about">アルゴリズム解説</a> へ。
       </p>
       {error && <div className="error-box">{error}</div>}
 
@@ -838,7 +843,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
             </span>
           </p>
           <button type="button" className="primary" onClick={prepare} disabled={preparing}>
-            {preparing ? "準備中..." : "フェーズ2データを準備"}
+            {preparing ? "準備中..." : "賛否スペクトラム分析データを準備"}
           </button>
           <span className="note" style={{ marginLeft: 12 }}>
             {status}
@@ -1187,7 +1192,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         </>
       )}
       <div className="row" style={{ marginTop: 12 }}>
-        <button type="button" onClick={() => navigate("/phase2")}>
+        <button type="button" onClick={() => navigate("/stance-spectrum")}>
           プロジェクト選択へ戻る
         </button>
       </div>
@@ -1231,8 +1236,8 @@ function Slider({
   );
 }
 
-/** フェーズ2のプロジェクト選択(トップレベルの「賛否スペクトラム分析」から入る) */
-export function Phase2Home() {
+/** 賛否スペクトラム分析のプロジェクト選択(トップレベルの「賛否スペクトラム分析」から入る) */
+export function StanceSpectrumHome() {
   // 賛否スペクトラム分析に所属するプロジェクトのみ(通常版とは領域を分ける)
   const projects = useLiveQuery(
     () =>
@@ -1249,7 +1254,7 @@ export function Phase2Home() {
       <p className="note">
         通常版とは別の分析モードです(クラスタリング方式が異なるため、結果は通常版のレポートとは混ざりません)。 CSV
         を取り込めば通常版を経由せずそのまま分析でき、事前分析済みサンプルでもすぐ試せます。 仕組みは{" "}
-        <a href="#/phase2/about">アルゴリズム解説</a> を参照。
+        <a href="#/stance-spectrum/about">アルゴリズム解説</a> を参照。
       </p>
       <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
         <div className="card" style={{ flex: 1, minWidth: 260 }}>
@@ -1258,15 +1263,15 @@ export function Phase2Home() {
             意見の CSV を取り込むと、意見抽出・stance/topics/reasons
             付与・ベクトル化まで賛否スペクトラム分析側で一括実行します (通常版の実行は不要)。
           </p>
-          <button type="button" className="primary" onClick={() => navigate("/phase2/new")}>
+          <button type="button" className="primary" onClick={() => navigate("/stance-spectrum/new")}>
             データを取り込む
           </button>
         </div>
-        {PHASE2_SAMPLES.map((s) => (
+        {STANCE_SPECTRUM_SAMPLES.map((s) => (
           <div key={s.id} className="card" style={{ flex: 1, minWidth: 260 }}>
             <h3>サンプル: {s.title}</h3>
             <p className="note">事前分析済み(分析の実行不要)。{s.note}</p>
-            <button type="button" onClick={() => navigate(`/phase2/${s.id}`)}>
+            <button type="button" onClick={() => navigate(`/stance-spectrum/${s.id}`)}>
               サンプルを開く
             </button>
           </div>
@@ -1287,7 +1292,7 @@ export function Phase2Home() {
               {project.comments.length.toLocaleString()} コメント / {project.status}
             </p>
             <div className="row">
-              <button type="button" className="primary" onClick={() => navigate(`/phase2/${project.id}`)}>
+              <button type="button" className="primary" onClick={() => navigate(`/stance-spectrum/${project.id}`)}>
                 開く
               </button>
               <button
@@ -1295,7 +1300,7 @@ export function Phase2Home() {
                 className="danger"
                 onClick={async () => {
                   if (confirm(`「${project.title}」を削除しますか?(賛否スペクトラム分析の中間データも消えます)`)) {
-                    await deletePhase2ProjectData(project.id);
+                    await deleteStanceSpectrumProjectData(project.id);
                   }
                 }}
               >

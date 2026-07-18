@@ -6,7 +6,7 @@ import { UMAP } from "umap-js";
 // 本家 hierarchical_clustering.py の移植(React/DOM 非依存)。
 // Web Worker (clustering.worker.ts) と Node デバッグの両方から使う。
 // UMAP は step() で1反復ずつ進め、数反復ごとに中間座標をコールバックで流せる
-// (進捗表示とフェーズ2のインタラクティブモードの土台。DESIGN §6.3)。
+// (進捗表示と賛否スペクトラム分析のインタラクティブモードの土台。DESIGN §6.3)。
 
 export type UmapParams = {
   /** 既定: min(15, N-1)。局所構造(小)⇔大域構造(大) */

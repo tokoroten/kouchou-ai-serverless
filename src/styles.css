@@ -416,10 +416,10 @@ table.preview-table {
 }
 
 /* 賛否スペクトラム分析はまだ実験的。目立たせず、フッターの端に控えめに置く */
-.footer-phase2 {
+.footer-stance-spectrum {
   color: var(--muted);
   text-decoration: none;
 }
-.footer-phase2:hover {
+.footer-stance-spectrum:hover {
   text-decoration: underline;
 }

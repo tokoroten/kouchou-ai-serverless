@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { trackClusters } from "../src/phase2/clusterTracker";
-import { assignTagVector, normalizeTag } from "../src/phase2/codebook";
-import { normalizeStance } from "../src/phase2/enrich";
-import { parseExtractEnrich } from "../src/phase2/extractEnrich";
-import { buildCandidateEdges, clusterByLayout, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
-import { summarizeCluster } from "../src/phase2/labelTemplate";
-import { sparseCosine, stanceSimilarity } from "../src/phase2/similarity";
-import type { Codebook, OpinionRecord, StanceDistribution } from "../src/phase2/types";
-import { DEFAULT_VIEW, dominantStance, emptyStance, stanceScore } from "../src/phase2/types";
+import { trackClusters } from "../src/stance-spectrum/clusterTracker";
+import { assignTagVector, normalizeTag } from "../src/stance-spectrum/codebook";
+import { normalizeStance } from "../src/stance-spectrum/enrich";
+import { parseExtractEnrich } from "../src/stance-spectrum/extractEnrich";
+import {
+  buildCandidateEdges,
+  clusterByLayout,
+  clusterByLouvain,
+  computeEdgeWeights,
+} from "../src/stance-spectrum/graph";
+import { summarizeCluster } from "../src/stance-spectrum/labelTemplate";
+import { sparseCosine, stanceSimilarity } from "../src/stance-spectrum/similarity";
+import type { Codebook, OpinionRecord, StanceDistribution } from "../src/stance-spectrum/types";
+import { DEFAULT_VIEW, dominantStance, emptyStance, stanceScore } from "../src/stance-spectrum/types";
 
 function stance(partial: Partial<StanceDistribution>): StanceDistribution {
   const s = { ...emptyStance(), unknown: 0, ...partial };

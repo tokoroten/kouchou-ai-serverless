@@ -73,7 +73,7 @@ topic/reason タグは**2パス方式**を仕様とする:
    追加フィールドが増えても下流が壊れない構造)。
 
    **【実装済み・2026-07 の設計判断】** フェーズ2は上記を「通常版 extraction への依存」ではなく
-   **専用の投入口**として実装した(`src/phase2/extractEnrich.ts` の `extractAndEnrich`)。
+   **専用の投入口**として実装した(`src/stance-spectrum/extractEnrich.ts` の `extractAndEnrich`)。
    理由: 従来は「通常版 extraction(コメント→意見)」の後段で意見1件ごとに enrichment を
    別コールしていたため、2000コメント→約7500意見のとき extraction 2000コール + enrichment
    7500コールが走っていた。生コメントから **コメント1件=チャット1回** で

@@ -8,11 +8,11 @@ import type { Project } from "../types/project";
 import { resolveEndpoint } from "../types/settings";
 
 // 賛否スペクトラム分析の専用データ投入口。通常版パイプラインを経由せず、CSV から直接
-// Project を作って #/phase2/{id} へ入る(結合抽出は phase2 側で走る)。
+// Project を作って #/stance-spectrum/{id} へ入る(結合抽出は賛否スペクトラム分析側で走る)。
 // 通常版ウィザードから、賛否スペクトラム分析に不要な設定(クラスタ数・ラベリング/概要プロンプト・
 // サンプリング数)を削いだ軽量版。それらの Project フィールドは既定値で埋める。
 
-export function Phase2NewPage() {
+export function StanceSpectrumNewPage() {
   const { settings } = useSettings();
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -97,7 +97,7 @@ export function Phase2NewPage() {
         tokenUsage: { input: 0, output: 0, total: 0 },
       };
       await db.projects.put(project);
-      navigate(`/phase2/${project.id}`);
+      navigate(`/stance-spectrum/${project.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setCreating(false);
@@ -245,7 +245,7 @@ export function Phase2NewPage() {
       )}
 
       <div className="row">
-        <button type="button" onClick={() => navigate("/phase2")}>
+        <button type="button" onClick={() => navigate("/stance-spectrum")}>
           戻る
         </button>
         <button

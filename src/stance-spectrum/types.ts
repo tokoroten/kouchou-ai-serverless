@@ -1,4 +1,4 @@
-// フェーズ2(賛否スペクトラム分析)のドメイン型。
+// 賛否スペクトラム分析(賛否スペクトラム分析)のドメイン型。
 // 一次資料 docs/INTERACTIVE_DESIGN_MEMO.md の OpinionRecord を基に、
 // docs/INTERACTIVE_DESIGN_REVIEW.md の修正(5分類への縮退を許すスキーマ等)を反映。
 
@@ -47,7 +47,7 @@ export type OpinionEnrichment = {
   confidence: number; // 0..1 解析の確信度
 };
 
-/** フェーズ2で扱う意見レコード。通常版の ExtractedArgument + 埋め込み + 構造化属性 */
+/** 賛否スペクトラム分析で扱う意見レコード。通常版の ExtractedArgument + 埋め込み + 構造化属性 */
 export type OpinionRecord = {
   id: string; // argId
   originalCommentId: string;

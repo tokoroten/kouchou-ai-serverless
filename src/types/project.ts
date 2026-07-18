@@ -73,12 +73,12 @@ export type TokenUsage = {
   total: number;
 };
 
-// extraction の出力。フェーズ2で構造化フィールド(stance 等)を追加できるよう
+// extraction の出力。賛否スペクトラム分析で構造化フィールド(stance 等)を追加できるよう
 // 抽出結果の型はここに一元化する(INTERACTIVE_DESIGN_REVIEW「通常版との合流点」#1)。
 export type ExtractedArgument = {
   argId: string; // "A{commentId}_{j}"
   argument: string;
-  // フェーズ2拡張用の追加フィールド置き場。下流は argId / argument 以外に依存しない。
+  // 賛否スペクトラム分析拡張用の追加フィールド置き場。下流は argId / argument 以外に依存しない。
   extra?: Record<string, unknown>;
 };
 

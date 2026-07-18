@@ -7,7 +7,7 @@ import { ENRICHMENT_SCHEMA, enrichmentPrompt } from "./prompts";
 import type { OpinionEnrichment, StanceDistribution, WeightedTag } from "./types";
 import { emptyStance, STANCE_KEYS } from "./types";
 
-// フェーズ2の構造化抽出(enrichment)。
+// 賛否スペクトラム分析の構造化抽出(enrichment)。
 // 通常版の抽出済み意見(argument)を入力に、stance 分布・topics・reasons 等を付与する。
 // チェックポイント: 意見単位(chunkCache step "enrich")。
 

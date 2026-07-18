@@ -1,5 +1,5 @@
 // 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)のアルゴリズム解説ページ。
-// 実装の一次資料は docs/INTERACTIVE_DESIGN_MEMO.md / REVIEW.md と src/phase2/。
+// 実装の一次資料は docs/INTERACTIVE_DESIGN_MEMO.md / REVIEW.md と src/stance-spectrum/。
 
 const sectionStyle: React.CSSProperties = { marginBottom: 8 };
 
@@ -21,7 +21,7 @@ function Formula({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function Phase2AboutPage() {
+export function StanceSpectrumAboutPage() {
   return (
     <div style={{ maxWidth: 860 }}>
       <h1>賛否スペクトラム分析のアルゴリズム解説</h1>
@@ -261,7 +261,7 @@ export function Phase2AboutPage() {
         <button type="button" onClick={() => history.back()}>
           戻る
         </button>
-        <a href="#/phase2">プロジェクト選択へ</a>
+        <a href="#/stance-spectrum">プロジェクト選択へ</a>
       </div>
     </div>
   );
