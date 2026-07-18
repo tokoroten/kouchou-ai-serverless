@@ -45,7 +45,13 @@ export function App() {
   } else if (route === "/stance-spectrum/about") {
     page = <StanceSpectrumAboutPage />;
   } else if (route.startsWith("/stance-spectrum/")) {
-    page = <StanceSpectrumPage projectId={route.slice("/stance-spectrum/".length)} />;
+    // key でプロジェクトごとに別インスタンスにする。これが無いと、プロジェクト間を
+    // 直接移動したとき(一覧を経由せず URL を書き換えた場合など)に React が同じ
+    // インスタンスを使い回し、前のプロジェクトの records/coords や「復元を試みたか」の
+    // ref が残ってしまう(前のデータが別プロジェクトの題名で表示され、かつ自動復元も
+    // 準備ボタンも出ない状態になる)。
+    const stanceSpectrumProjectId = route.slice("/stance-spectrum/".length);
+    page = <StanceSpectrumPage key={stanceSpectrumProjectId} projectId={stanceSpectrumProjectId} />;
   } else {
     page = <p>ページが見つかりません。</p>;
   }
