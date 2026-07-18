@@ -5,13 +5,14 @@ import { throwIfAborted } from "../lib/pipeline/context";
 import type { CommentRow, ExtractedArgument, Relation } from "../types/project";
 import { fallbackEnrichment, normalizeEnrichment } from "./enrich";
 import { buildExtractEnrichPrompt, EXTRACT_ENRICH_SCHEMA } from "./prompts";
+import { CHUNK_STEP } from "./storageKeys";
 import type { OpinionEnrichment } from "./types";
 
 // 賛否スペクトラム分析の投入口: 生コメントから「意見抽出 + 構造化属性付与(stance/topics/reasons 等)」を
 // コメント1件=チャット1回でまとめて行う。通常版の extraction には依存しない。
 // - 同一の意見文字列は最初の arg_id に集約(本家 argument_map と同じ)。enrichment は初出を採用
 // - 失敗したコメントは空リスト扱いで続行。全件失敗ならエラー
-// - チェックポイント: コメント単位(chunkCache step "phase2-extract")
+// - チェックポイント: コメント単位(chunkCache step CHUNK_STEP.extract)
 
 /** 1意見ぶんの抽出結果(意見文 + 構造化属性) */
 export type RawOpinion = { argument: string; enrichment: OpinionEnrichment };
@@ -43,12 +44,12 @@ export async function extractAndEnrich(
     comments.map((comment, index) =>
       semaphore.run(async () => {
         throwIfAborted(ctx.signal);
-        const cached = await ctx.checkpoints.getChunk("phase2-extract", comment.commentId);
+        const cached = await ctx.checkpoints.getChunk(CHUNK_STEP.extract, comment.commentId);
         if (cached !== undefined) {
           perComment[index] = cached as RawOpinion[];
         } else {
           perComment[index] = await extractEnrichOne(comment.body, systemPrompt, ctx);
-          await ctx.checkpoints.putChunk("phase2-extract", comment.commentId, perComment[index]);
+          await ctx.checkpoints.putChunk(CHUNK_STEP.extract, comment.commentId, perComment[index]);
         }
         done++;
         onProgress?.(done, total);

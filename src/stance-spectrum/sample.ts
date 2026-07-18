@@ -1,4 +1,5 @@
 import type { EdgeSet } from "./graph";
+import { LEGACY_SAMPLE_FILE_TYPE, SAMPLE_FILE_TYPE } from "./storageKeys";
 import type { Codebook, OpinionEnrichment, OpinionRecord } from "./types";
 
 // 事前分析済みサンプル(賛否スペクトラム分析プレビュー)の直列化。
@@ -6,7 +7,9 @@ import type { Codebook, OpinionEnrichment, OpinionRecord } from "./types";
 // 分析を実行しなくても賛否スペクトラム分析 UI を試せるようにする。
 
 export type StanceSpectrumSample = {
-  type: "kouchou-ai-phase2-sample";
+  // 書き出しは常に SAMPLE_FILE_TYPE。読み込みは旧名称も受理する
+  // (リネーム前にユーザがダウンロード済みのファイルは移行できないため)
+  type: typeof SAMPLE_FILE_TYPE | typeof LEGACY_SAMPLE_FILE_TYPE;
   title: string;
   records: SerializedRecord[];
   codebook: Codebook;
@@ -40,7 +43,7 @@ export function serializeSample(
   coords: { x: Float32Array; y: Float32Array },
 ): StanceSpectrumSample {
   return {
-    type: "kouchou-ai-phase2-sample",
+    type: SAMPLE_FILE_TYPE,
     title,
     records: records.map((r) => ({
       id: r.id,
@@ -77,8 +80,9 @@ export function deserializeSample(sample: StanceSpectrumSample): {
   edges: EdgeSet;
   coords: { x: Float32Array; y: Float32Array };
 } {
-  if (sample.type !== "kouchou-ai-phase2-sample")
+  if (sample.type !== SAMPLE_FILE_TYPE && sample.type !== LEGACY_SAMPLE_FILE_TYPE) {
     throw new Error("賛否スペクトラム分析サンプルのファイルではありません");
+  }
   const records: OpinionRecord[] = sample.records.map((r) => ({
     id: r.id,
     originalCommentId: r.commentId,
