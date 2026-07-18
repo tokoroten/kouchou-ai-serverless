@@ -248,11 +248,9 @@ table.preview-table {
 }
 .cluster-card .cluster-takeaway {
   font-size: 0.85rem;
+  line-height: 1.5;
   margin: 6px 0 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  white-space: pre-wrap;
 }
 /* LLM 生成の説明文は全文表示する(クランプしない) */
 .cluster-card .cluster-desc {
