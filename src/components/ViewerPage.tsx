@@ -59,8 +59,8 @@ export function ViewerPage({ reportId }: { reportId: string }) {
 
   const generatePonchie = async () => {
     const endpoint = resolveEndpoint(settings, "chat");
-    if (!endpoint.apiKey && endpoint.baseUrl.startsWith("https://api.openai.com")) {
-      alert("OpenAI API キーが設定されていません。設定画面でキーを入力してください。");
+    if (!endpoint.baseUrl || !endpoint.apiKey) {
+      alert("チャットスロットの API キーが設定されていません。設定画面でキーを入力してください。");
       return;
     }
     // 画像生成用エンドポイント(画像生成は dall-e-3 固定)
