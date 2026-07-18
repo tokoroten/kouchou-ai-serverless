@@ -54,7 +54,10 @@ export async function runPipeline(project: Project, deps: OrchestratorDeps): Pro
   onStepChange?.("clustering");
   let clusteringResult: ClusteringResult | undefined = await store.get("clustering");
   if (!clusteringResult) {
-    clusteringResult = await clustering(embeddingResult, project.clusterNums, ctx, deps.clusteringExtra);
+    clusteringResult = await clustering(embeddingResult, project.clusterNums, ctx, deps.clusteringExtra, {
+      umap: project.umap,
+      seed: project.umapSeed,
+    });
     await store.put("clustering", clusteringResult);
   }
 

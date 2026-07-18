@@ -1,3 +1,4 @@
+import type { UmapParams } from "../lib/pipeline/clusteringCore";
 import type { EndpointConfig } from "./settings";
 
 // プロジェクトに保存する解決済みの実行設定
@@ -53,6 +54,10 @@ export type Project = {
   attributeColumns: string[];
   settingsSnapshot: ResolvedSettings;
   clusterNums: number[]; // 空なら自動(cube-root)
+  /** UMAP 詳細パラメータ。既定値と異なるキーのみ入る(省略時は既定値。既存データ互換) */
+  umap?: UmapParams;
+  /** UMAP/KMeans の乱数シード。省略時は "kouchou-ai"(既存データ互換) */
+  umapSeed?: string;
   prompts: {
     extraction: string;
     initialLabelling: string;

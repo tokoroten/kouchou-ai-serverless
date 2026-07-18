@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { type CsvPreview, detectBodyColumn, normalizeComments, parseCsvFile } from "../lib/csv";
-import { estimateCost, estimateUsd } from "../lib/estimate";
+import { estimateCost, estimateSlotCosts, type SlotCost } from "../lib/estimate";
 import { calculateRecommendedClusterNums } from "../lib/pipeline/clusterNums";
 import { navigate } from "../lib/router";
 import { db, requestPersistentStorage } from "../lib/storage/db";
@@ -8,6 +8,30 @@ import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overvie
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
 import { resolveEndpoint } from "../types/settings";
+import { toUmapInput, UMAP_UI_DEFAULTS, UmapParamsPanel, type UmapUiParams } from "./UmapParamsPanel";
+
+/**
+ * 参考費用の表示。小数3桁だと少額が "$0.000" になり「無料」と読めてしまうため、
+ * 丸めて 0 になる額は「$0.001 未満」と明示する(ちょうど 0 とは区別する)。
+ * 「約」を含めた完全な文言を返す(呼び出し側で前置きすると二重になるため)。
+ */
+function formatUsd(usd: number): string {
+  if (usd === 0) return "$0.000";
+  if (usd < 0.001) return "$0.001 未満";
+  return `約 $${usd.toFixed(3)}`;
+}
+
+/** スロット1つ分の費用表示。単価不明なら金額を出さず、その旨を書く */
+function slotCostLabel(cost: SlotCost): string {
+  switch (cost.kind) {
+    case "local":
+      return "0円(ローカル実行)";
+    case "unknown":
+      return "単価不明(セルフホスト等)";
+    case "usd":
+      return formatUsd(cost.usd);
+  }
+}
 
 // 新規作成ウィザード(DESIGN §7-3)。
 // Step1: CSV → Step2: タイトル → Step3: 詳細設定 → Step4: コスト見積り → 実行
@@ -34,6 +58,8 @@ export function WizardPage() {
   // Step3
   const [clusterNumsText, setClusterNumsText] = useState("");
   const [samplingNum, setSamplingNum] = useState(30);
+  // UMAP 詳細パラメータ(通常は既定値のまま。既定と同じキーは保存されない)
+  const [umapParams, setUmapParams] = useState<UmapUiParams>(UMAP_UI_DEFAULTS);
   const [showPrompts, setShowPrompts] = useState(false);
   const [prompts, setPrompts] = useState({
     extraction: extractionPrompt,
@@ -128,6 +154,14 @@ export function WizardPage() {
         concurrency: settings.concurrency,
       },
       clusterNums,
+      // 既定値と同じキーは含めない(チェックポイントキーが既定実行時と一致する)
+      ...(() => {
+        const { seed, umap } = toUmapInput(umapParams);
+        return {
+          ...(Object.keys(umap).length > 0 ? { umap } : {}),
+          ...(seed !== UMAP_UI_DEFAULTS.seed ? { umapSeed: seed } : {}),
+        };
+      })(),
       prompts,
       samplingNum,
       status: "created",
@@ -140,6 +174,9 @@ export function WizardPage() {
 
   const chatEndpointNow = resolveEndpoint(settings, "chat");
   const embeddingEndpointNow = resolveEndpoint(settings, "embedding");
+  // 費用は「実際に選択中のモデルの単価」でスロットごとに算出する
+  // (ローカル実行は 0 円、既知モデルリストに単価が無ければ金額を出さない)
+  const costs = estimateSlotCosts(estimate, chatEndpointNow, embeddingEndpointNow);
   const settingsMissing = !chatEndpointNow.baseUrl || !embeddingEndpointNow.baseUrl;
 
   return (
@@ -194,8 +231,8 @@ export function WizardPage() {
                 件 — 推定コスト:{" "}
                 <b>
                   チャット 約 {((estimate.chatInputTokens + estimate.chatOutputTokens) / 1000).toFixed(0)}k + 埋め込み
-                  約 {(estimate.embeddingTokens / 1000).toFixed(0)}k トークン(参考 約 $
-                  {estimateUsd(estimate).toFixed(3)})
+                  約 {(estimate.embeddingTokens / 1000).toFixed(0)}k トークン(参考 {formatUsd(costs.knownTotalUsd)}
+                  {costs.hasUnknown ? " ※単価不明のモデルを除く" : ""})
                 </b>
               </p>
               <label>意見本文の列</label>
@@ -301,6 +338,13 @@ export function WizardPage() {
             onChange={(e) => setSamplingNum(Math.max(5, Number(e.target.value) || 30))}
           />
           <div style={{ marginTop: 12 }}>
+            <UmapParamsPanel
+              params={umapParams}
+              onChange={setUmapParams}
+              note="ここでの設定は実行時のクラスタリングに使われます。実行後も「クラスタリングを再実行」画面から変更・比較できます。"
+            />
+          </div>
+          <div style={{ marginTop: 12 }}>
             <button type="button" onClick={() => setShowPrompts(!showPrompts)}>
               {showPrompts ? "プロンプトを隠す" : "詳細設定: プロンプトを編集"}
             </button>
@@ -342,15 +386,26 @@ export function WizardPage() {
             <li>チャット出力: 約 {estimate.chatOutputTokens.toLocaleString()} トークン</li>
             <li>埋め込み: 約 {estimate.embeddingTokens.toLocaleString()} トークン</li>
           </ul>
-          {resolveEndpoint(settings, "chat").baseUrl.startsWith("local:") ||
-          resolveEndpoint(settings, "embedding").baseUrl.startsWith("local:") ? (
+          {/* 費用はスロットごとに、実際に選択されているモデルの単価で計算する。
+              チャットだけ Gemini Nano で埋め込みは API、という構成があるため、
+              まとめて 0 円と書くと課金分を見落とす */}
+          {costs.chat.kind === "local" && costs.embedding.kind === "local" ? (
             <p>
-              ローカル実行(Gemini Nano / ブラウザ内埋め込み)が選択されているため、その分の API 費用は <b>0円</b> です。
+              チャット・埋め込みともにローカル実行({costs.chat.model} / {costs.embedding.model})のため、API 費用は{" "}
+              <b>0円</b> です。
             </p>
           ) : (
-            <p>
-              参考費用(gpt-5.4-nano + text-embedding-3-small 価格): <b>約 ${estimateUsd(estimate).toFixed(3)}</b>
-            </p>
+            <>
+              <p>
+                チャット({costs.chat.model || "未設定"}): <b>{slotCostLabel(costs.chat)}</b>
+                <br />
+                埋め込み({costs.embedding.model || "未設定"}): <b>{slotCostLabel(costs.embedding)}</b>
+              </p>
+              <p>
+                参考費用の合計: <b>{formatUsd(costs.knownTotalUsd)}</b>
+                {costs.hasUnknown && <span className="note">(単価不明のモデルを除く)</span>}
+              </p>
+            </>
           )}
           <p className="note">
             ※ あくまで概算です。処理はいつでも中断でき、途中経過はブラウザに保存されるため再開できます。

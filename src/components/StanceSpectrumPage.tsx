@@ -11,6 +11,7 @@ import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from
 import { type TrackedAssignment, trackClusters } from "../stance-spectrum/clusterTracker";
 import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../stance-spectrum/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../stance-spectrum/labelTemplate";
+import { LAYOUT_UMAP_DEFAULTS, type LayoutUmapParams } from "../stance-spectrum/layoutParams";
 import { buildEdgesWithWorker, prepareStanceSpectrumRecords } from "../stance-spectrum/prepare";
 import { deserializeSample, serializeSample } from "../stance-spectrum/sample";
 import {
@@ -25,6 +26,7 @@ import { DEFAULT_VIEW, dominantStance, stanceScore } from "../stance-spectrum/ty
 import { useSettings } from "../store/settings";
 import type { EmbeddingResult } from "../types/project";
 import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
+import { UmapParamsPanel } from "./UmapParamsPanel";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
@@ -80,6 +82,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   // 凸包(クラスタのなわばり)は既定オン。グラフクラスタは全体ビューでは空間的に
   // 重なりやすく、なわばりを見せた方がクラスタの範囲を掴みやすい
   const [showHull, setShowHull] = useState(true);
+  // 表示用レイアウト UMAP の詳細パラメータ(通常は既定値のまま。拡張設定)
+  const [layoutUmap, setLayoutUmap] = useState<LayoutUmapParams>(LAYOUT_UMAP_DEFAULTS);
   // トピック絞り込み(ドリルダウン)。indices はグローバルインデックス。
   // 混在したままの全体 UMAP ではなく、トピックを選んでから全キャンバスで軸分離する
   const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
@@ -324,6 +328,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       }
     };
     worker.postMessage({ type: "init", x: initial.x, y: initial.y });
+    // 直後の "edges" で使われるよう、パラメータは init と recluster の間に流す
+    worker.postMessage({ type: "umapParams", params: layoutUmap, recold: false });
     recluster(recs, edgeSet, viewForRecluster, null, worker, topicConditioned);
   };
 
@@ -464,6 +470,17 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
    *
    * 埋め込みも UMAP 本体も再計算しないので LLM コストはゼロ、待ち時間も焼きなましだけ。
    */
+  /**
+   * レイアウト UMAP の詳細パラメータ変更。現在の座標を出発点に、初回同様の強さで
+   * 焼き直す(recold=true)。ウォームスタートのままだと minDist/spread の変更が
+   * ほとんど見た目に出ないため。座標は破棄しないので LLM コストはゼロ。
+   */
+  const applyLayoutUmap = (next: LayoutUmapParams) => {
+    setLayoutUmap(next);
+    layoutWorkerRef.current?.postMessage({ type: "umapParams", params: next, recold: true });
+    setStatus("UMAP パラメータを変更して焼き直しています...");
+  };
+
   const resetLayout = () => {
     if (!records || !edges) return;
     const pristine = initialCoordsRef.current;
@@ -1195,6 +1212,13 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                 </span>
               )}
             </div>
+
+            <UmapParamsPanel
+              params={layoutUmap}
+              onChange={applyLayoutUmap}
+              defaults={LAYOUT_UMAP_DEFAULTS}
+              note="レイアウト用 UMAP の設定です。変更すると現在の座標から強めに焼き直します(埋め込み・LLM は再実行しません)。重み設定とは独立で、保存ビューには含まれません。"
+            />
 
             {view.selectedClusterId === null ? (
               <p className="note">
