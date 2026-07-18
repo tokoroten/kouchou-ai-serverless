@@ -3,7 +3,13 @@ import { listModels, listModelsDetailed, probeChat, requestEmbeddings } from "..
 import { prepareAndTestGeminiNano } from "../lib/llm/geminiNano";
 import { getStorageStatus, requestPersistentStorage, type StorageStatus } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
-import { isProviderConfigured, PRESETS, type PresetId, resolveEndpoint } from "../types/settings";
+import {
+  isProviderConfigured,
+  PRESETS,
+  type PresetId,
+  resolveEndpoint,
+  supportsImageGeneration,
+} from "../types/settings";
 
 // 設定画面(DESIGN §4)。
 // 1. プロバイダごとに API キー等を登録
@@ -481,6 +487,100 @@ function SlotCard({ slot }: { slot: "chat" | "embedding" }) {
   );
 }
 
+/**
+ * 画像生成スロットの設定カード。
+ * chat/embedding の SlotCard とは別実装(対応プロバイダが少なく、モデル一覧の
+ * 自動取得や応答テストが不要なため)。見た目は SlotCard に合わせる。
+ */
+function ImageSlotCard() {
+  const { settings, setImageSlot } = useSettings();
+  const selection = settings.imageSlot;
+
+  // 画像生成(images/generations)対応かつ設定済みのプロバイダのみ候補にする
+  const candidates = PRESETS.filter((p) => supportsImageGeneration(p) && isProviderConfigured(p.id, settings));
+  const preset = PRESETS.find((p) => p.id === selection.provider);
+  const knownModels = preset?.knownImageModels ?? [];
+  const priceOf = (id: string) => knownModels.find((m) => m.id === id)?.price;
+
+  return (
+    <div className="card">
+      <h2>画像生成(ポンチ絵)</h2>
+      <p className="note">レポートのポンチ絵(概念図)生成に使います。費用はトークンでなく1枚ごとの課金です。</p>
+      {candidates.length === 0 ? (
+        <p className="note">選択可能なプロバイダがありません。上でプロバイダ(OpenAI 等)のキーを設定すると選べます。</p>
+      ) : (
+        <>
+          <label>プロバイダ</label>
+          <select
+            value={selection.provider ?? ""}
+            onChange={(e) => {
+              const id = (e.target.value || null) as PresetId | null;
+              // モデルは空に戻す(空ならプリセット既定が使われる)
+              setImageSlot({ provider: id, model: "" });
+            }}
+          >
+            <option value="">選択してください(未選択ならポンチ絵生成は無効)</option>
+            {candidates.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          {selection.provider && (
+            <>
+              <label>
+                モデル{" "}
+                <span className="note" style={{ fontWeight: 400 }}>
+                  (候補から選択 or 直接入力。価格は USD / 枚の参考値)
+                </span>
+              </label>
+              {knownModels.length > 0 && (
+                <div className="row" style={{ marginBottom: 4 }}>
+                  {knownModels.map((m) => (
+                    <button
+                      type="button"
+                      key={m.id}
+                      className={`model-chip ${selection.model === m.id ? "primary" : ""}`}
+                      onClick={() => setImageSlot({ model: m.id })}
+                    >
+                      {m.id}
+                      {m.price && <span className="model-price">{m.price}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                list="model-choices-image"
+                value={selection.model}
+                onChange={(e) => setImageSlot({ model: e.target.value })}
+                placeholder={preset?.imageModel ? `モデル名(空なら既定 ${preset.imageModel})` : "モデル名を入力"}
+              />
+              <datalist id="model-choices-image">
+                {knownModels.map((m) => (
+                  <option key={m.id} value={m.id} label={m.price} />
+                ))}
+              </datalist>
+              {selection.model ? (
+                priceOf(selection.model) && (
+                  <p className="note" style={{ margin: "4px 0 0" }}>
+                    選択中: {selection.model} — {priceOf(selection.model)}
+                  </p>
+                )
+              ) : (
+                <p className="note" style={{ margin: "4px 0 0" }}>
+                  {preset?.imageModel
+                    ? `モデル未指定のため、プリセット既定の ${preset.imageModel} が使われます。`
+                    : "このプロバイダには既定モデルがありません。モデル名を入力してください。"}
+                </p>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 type HealthItem = { label: string; status: "ok" | "ng" | "running"; detail: string };
 
 function HealthCheckCard() {
@@ -784,6 +884,7 @@ export function SettingsPage() {
       <ProviderKeysCard />
       <SlotCard slot="chat" />
       <SlotCard slot="embedding" />
+      <ImageSlotCard />
       <HealthCheckCard />
       <div className="card">
         <h2>実行設定</h2>
