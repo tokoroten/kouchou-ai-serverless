@@ -176,8 +176,11 @@ export function ViewerPage({ reportId }: { reportId: string }) {
       </div>
       {exportError && <div className="error-box">{exportError}</div>}
 
-      {/* ポンチ絵セクション: レポートの争点を一枚絵にする。PowerPoint の先頭スライドにも入る */}
-      <section className="card">
+      <ReportViewer result={report.result} />
+
+      {/* ポンチ絵セクション: レポートの争点を一枚絵にする。PowerPoint の先頭スライドにも入る。
+          チャートと解説を先に見せたいので、ビューア(散布図)の下に置く */}
+      <section className="card" style={{ marginTop: 12 }}>
         <div className="row" style={{ alignItems: "center" }}>
           <h2 style={{ margin: 0 }}>ポンチ絵</h2>
           {generating ? (
@@ -255,8 +258,6 @@ export function ViewerPage({ reportId }: { reportId: string }) {
           />
         </button>
       )}
-
-      <ReportViewer result={report.result} />
     </div>
   );
 }
