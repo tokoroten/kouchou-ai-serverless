@@ -10,8 +10,23 @@ import { DB_NAME, db } from "./db";
 // 本番の配信元は https://tokoroten.github.io/kouchou-ai-serverless/ で、
 // オリジン(https://tokoroten.github.io)は同じアカウントの他の GitHub Pages
 // プロジェクトと共有される。したがって「オリジンの全データを消す」は
-// 無関係なアプリのデータまで巻き込む。既定は本アプリの DB のみとし、
+// 無関係なアプリのデータまで巻き込む。既定は本アプリのデータのみとし、
 // オリジン全体の消去は呼び出し側が明示したときだけ行う。
+
+/**
+ * 本アプリが OPFS を使う場合の置き場所。
+ *
+ * 【規約】OPFS に書くものは、必ずこのディレクトリ配下に置くこと。
+ * オリジンは他アプリと共有されるため、OPFS のルート直下に直接書くと
+ * 「自分のデータ」と「他アプリのデータ」を区別できなくなり、
+ * 初期化のときに消すべきものだけを消せなくなる。
+ *
+ * 現時点で本アプリは OPFS を使っていない(ローカル埋め込みモデルは
+ * transformers.js が Cache Storage に置く)。将来 OPFS を使う機能
+ * (画像生成の出力やモデル重みなど)を足すときは、この規約に従えば
+ * 既定スコープの初期化が自動的に正しく働く。
+ */
+export const APP_OPFS_DIR = "kouchou-ai-serverless";
 
 export type WipeScope = "app" | "origin";
 
@@ -79,13 +94,14 @@ export async function listForeignData(): Promise<ForeignData> {
       // 列挙できない環境(Firefox 等)では空扱い
     }
   }
-  // OPFS は本アプリが使っていないため、見つかるものはすべて他アプリのもの
-  return { databases, opfsEntries: await listOpfsEntries() };
+  // 本アプリのものは APP_OPFS_DIR 配下にしか置かない規約なので、それ以外は他アプリのもの
+  const opfsEntries = (await listOpfsEntries()).filter((name) => name !== APP_OPFS_DIR);
+  return { databases, opfsEntries };
 }
 
 /**
  * 保存データを消す。
- * scope="app"    … 本アプリの IndexedDB のみ(既定・安全)
+ * scope="app"    … 本アプリのもののみ: IndexedDB と OPFS の APP_OPFS_DIR 配下(既定・安全)
  * scope="origin" … 同じオリジンの全 IndexedDB と OPFS も消す(他アプリを巻き込む)
  *
  * 設定(localStorage の API キー等)とローカル埋め込みモデルの Cache Storage は
@@ -121,10 +137,13 @@ export async function wipeStoredData(scope: WipeScope = "app"): Promise<WipeRepo
     }
   }
 
-  if (scope === "origin" && navigator.storage?.getDirectory) {
+  if (navigator.storage?.getDirectory) {
     try {
       const root = await navigator.storage.getDirectory();
-      for (const name of await listOpfsEntries()) {
+      // app スコープでは自分の置き場だけ、origin スコープでは全エントリを消す
+      const entries = await listOpfsEntries();
+      const opfsTargets = scope === "origin" ? entries : entries.filter((name) => name === APP_OPFS_DIR);
+      for (const name of opfsTargets) {
         try {
           await root.removeEntry(name, { recursive: true });
           report.deletedOpfsEntries.push(name);
