@@ -1288,23 +1288,6 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               >
                 {labeling ? "ラベル生成中..." : "LLMでラベル生成"}
               </button>
-              {ponchieGenerating ? (
-                <button type="button" onClick={() => ponchieAbortRef.current?.abort()}>
-                  ポンチ絵の生成を中断
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={generatePonchie}
-                  disabled={!!ponchieDisabledReason}
-                  title={
-                    ponchieDisabledReason ||
-                    `現在のクラスタ構成(ラベル・件数・賛否の内訳)からポンチ絵を生成します${imagePrice ? `。費用の目安: ${imagePrice}` : ""}`
-                  }
-                >
-                  {ponchie ? "ポンチ絵を再生成" : "ポンチ絵を生成"}
-                </button>
-              )}
               {/* 押せない理由は tooltip だけだと気づかれないので、その場に文言として出す */}
               {labelDisabledReason && (
                 <span className="note">
@@ -1315,11 +1298,6 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                       <a href="#/settings">設定を開く</a>
                     </>
                   )}
-                </span>
-              )}
-              {!labelDisabledReason && ponchieDisabledReason && !imageConfigured && (
-                <span className="note">
-                  {ponchieDisabledReason} <a href="#/settings">設定を開く</a>
                 </span>
               )}
               <button
@@ -1420,71 +1398,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                 {explanation.text}
               </p>
             )}
-            {ponchieError && <div className="error-box">ポンチ絵の生成に失敗しました: {ponchieError}</div>}
-            {ponchieGenerating && <p className="note">ポンチ絵を生成しています(数十秒かかることがあります)...</p>}
             <p className="note">{status}</p>
           </div>
-
-          {/* ポンチ絵(現在のビューから生成した概念図)。クリックで最大化 */}
-          {ponchie && ponchieUrl && (
-            <div className="card">
-              <div className="row" style={{ alignItems: "flex-start" }}>
-                <button
-                  type="button"
-                  onClick={() => setPonchieLightbox(true)}
-                  title="クリックで拡大表示"
-                  style={{ border: "none", padding: 0, background: "none", cursor: "zoom-in", display: "block" }}
-                >
-                  <img
-                    src={ponchieUrl}
-                    alt="現在のビューの争点を表すポンチ絵"
-                    style={{ maxWidth: "100%", maxHeight: 320 }}
-                  />
-                </button>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <p className="note">
-                    モデル: {ponchie.model} / 生成日時: {new Date(ponchie.createdAt).toLocaleString()}
-                    <br />
-                    生成時点のクラスタ構成の絵です。スライダーで切り直したら「ポンチ絵を再生成」で作り直せます。
-                  </p>
-                  <details>
-                    <summary className="note">生成プロンプトを表示</summary>
-                    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{ponchie.prompt}</pre>
-                  </details>
-                  <button type="button" onClick={deletePonchie} disabled={ponchieGenerating}>
-                    削除
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ライトボックス: 背景クリックか Escape で閉じる */}
-          {ponchieLightbox && ponchieUrl && (
-            <button
-              type="button"
-              aria-label="拡大表示を閉じる"
-              onClick={() => setPonchieLightbox(false)}
-              style={{
-                position: "fixed",
-                inset: 0,
-                zIndex: 1000,
-                background: "rgba(0, 0, 0, 0.8)",
-                border: "none",
-                padding: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "zoom-out",
-              }}
-            >
-              <img
-                src={ponchieUrl}
-                alt="現在のビューの争点を表すポンチ絵(拡大表示)"
-                style={{ maxWidth: "95vw", maxHeight: "95vh", objectFit: "contain" }}
-              />
-            </button>
-          )}
 
           <div className="viewer-chart" style={{ height: 560 }}>
             <Plot
@@ -1540,6 +1455,102 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               ))}
             </div>
           </section>
+
+          {/* ポンチ絵(現在のビューから生成した概念図)。操作 UI と散布図を1画面に収めるため、
+              生成ボタンごとページ最下部に置く */}
+          <section className="card" style={{ marginTop: 12 }}>
+            <h2>ポンチ絵(概念図)</h2>
+            <div className="row">
+              {ponchieGenerating ? (
+                <button type="button" onClick={() => ponchieAbortRef.current?.abort()}>
+                  ポンチ絵の生成を中断
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={generatePonchie}
+                  disabled={!!ponchieDisabledReason}
+                  title={
+                    ponchieDisabledReason ||
+                    `現在のクラスタ構成(ラベル・件数・賛否の内訳)からポンチ絵を生成します${imagePrice ? `。費用の目安: ${imagePrice}` : ""}`
+                  }
+                >
+                  {ponchie ? "ポンチ絵を再生成" : "ポンチ絵を生成"}
+                </button>
+              )}
+              {/* 押せない理由は tooltip だけだと気づかれないので、その場に文言として出す */}
+              {ponchieDisabledReason && (
+                <span className="note">
+                  {ponchieDisabledReason}
+                  {!imageConfigured && (
+                    <>
+                      {" "}
+                      <a href="#/settings">設定を開く</a>
+                    </>
+                  )}
+                </span>
+              )}
+              {ponchieGenerating && <span className="note">生成しています(数十秒かかることがあります)...</span>}
+            </div>
+            {ponchieError && <div className="error-box">ポンチ絵の生成に失敗しました: {ponchieError}</div>}
+            {ponchie && ponchieUrl && (
+              <div className="row" style={{ alignItems: "flex-start", marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setPonchieLightbox(true)}
+                  title="クリックで拡大表示"
+                  style={{ border: "none", padding: 0, background: "none", cursor: "zoom-in", display: "block" }}
+                >
+                  <img
+                    src={ponchieUrl}
+                    alt="現在のビューの争点を表すポンチ絵"
+                    style={{ maxWidth: "100%", maxHeight: 320 }}
+                  />
+                </button>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <p className="note">
+                    モデル: {ponchie.model} / 生成日時: {new Date(ponchie.createdAt).toLocaleString()}
+                    <br />
+                    生成時点のクラスタ構成の絵です。スライダーで切り直したら「ポンチ絵を再生成」で作り直せます。
+                  </p>
+                  <details>
+                    <summary className="note">生成プロンプトを表示</summary>
+                    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{ponchie.prompt}</pre>
+                  </details>
+                  <button type="button" onClick={deletePonchie} disabled={ponchieGenerating}>
+                    削除
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* ライトボックス: 背景クリックか Escape で閉じる */}
+          {ponchieLightbox && ponchieUrl && (
+            <button
+              type="button"
+              aria-label="拡大表示を閉じる"
+              onClick={() => setPonchieLightbox(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 1000,
+                background: "rgba(0, 0, 0, 0.8)",
+                border: "none",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "zoom-out",
+              }}
+            >
+              <img
+                src={ponchieUrl}
+                alt="現在のビューの争点を表すポンチ絵(拡大表示)"
+                style={{ maxWidth: "95vw", maxHeight: "95vh", objectFit: "contain" }}
+              />
+            </button>
+          )}
         </>
       )}
       <div className="row" style={{ marginTop: 12 }}>
