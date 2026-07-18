@@ -1,4 +1,4 @@
-﻿import Delaunator from "delaunator";
+import Delaunator from "delaunator";
 import seedrandom from "seedrandom";
 import { UMAP } from "umap-js";
 
@@ -243,7 +243,16 @@ function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float
     usable++;
   }
   if (usable === 0) {
-    // 有効辺なし: レイアウトは動かないので現在座標で1回だけ連結列を送る(でないとクラスタが出ない)
+    // 有効辺なし(しきい値を上げ切った等): レイアウトは動かせない。
+    // 前の最適化器を必ず止める。放置すると古い辺の重みのまま点が動き続け、
+    // ここで送った連結列(= この瞬間の座標で作ったクラスタ)と表示位置が
+    // 次第にずれていく(凸包が点群から外れる)。
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    umap = null;
+    // 現在座標で1回だけ連結列を送る(でないとクラスタが出ない)
     postLinkage();
     linkagePosted = true;
     return;

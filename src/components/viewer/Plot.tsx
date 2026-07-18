@@ -23,6 +23,10 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
   onHoverRef.current = onHover;
   // 進行中の Plotly.react()。アンマウント時はこれの完了を待ってから purge する。
   const pendingRef = useRef<Promise<unknown>>(Promise.resolve());
+  // StrictMode は「マウント → 後始末 → 再マウント」を同じ DOM ノードで行う。
+  // 待ってから purge する都合上、後始末で予約した purge が再マウント後の
+  // 描画を消してしまいうるので、本当にアンマウントされたかを見て判断する。
+  const unmountedRef = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -30,6 +34,7 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
     let cancelled = false;
     pendingRef.current = Plotly.react(el, data, layout, { responsive: true, ...config }).then(() => {
       if (cancelled) return;
+      if (unmountedRef.current) return;
       // biome-ignore lint/suspicious/noExplicitAny: Plotly が拡張した HTMLElement
       const gd = el as any;
       gd.removeAllListeners?.("plotly_click");
@@ -43,14 +48,22 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
   }, [data, layout, config]);
 
   useEffect(() => {
+    unmountedRef.current = false;
     const el = ref.current;
     return () => {
       if (!el) return;
+      unmountedRef.current = true;
       // 描画の途中で purge すると、Plotly 内部に残った遅延タスクが破棄済みの
       // _fullLayout を参照して落ちる(_redrawFromAutoMarginCount の TypeError)。
       // レイアウト Worker が座標を流し続けている最中にページを離れると起きやすい。
       // 進行中の描画が終わってから片付ける。
-      pendingRef.current.catch(() => {}).then(() => Plotly.purge(el));
+      // StrictMode で再マウントされた場合は unmountedRef が false に戻るので、
+      // 生きているグラフを消さない。
+      pendingRef.current
+        .catch(() => {})
+        .then(() => {
+          if (unmountedRef.current) Plotly.purge(el);
+        });
     };
   }, []);
 

@@ -228,9 +228,13 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       startLayout(initial, recs, edgeSet);
       setStatus(cacheOnly ? "保存済みデータから復元しました" : "準備完了 — スライダーで再クラスタリングできます");
     } catch (e) {
+      // 自動復元が理由を問わず失敗したら、必ず準備ボタンを出せる状態にして戻る。
+      // ここで CacheMissError だけを扱うと、Worker のエラーや壊れたキャッシュで
+      // 失敗したときに復元中の表示も準備ボタンも出ない行き止まりになる
+      // (リロードしても同じ所で失敗するため、操作する手段が無くなる)。
+      if (cacheOnly) setNeedsApiPreparation(true);
       if (e instanceof CacheMissError) {
-        // 復元だけでは足りなかった。API を使う準備が要ることをボタンで示す
-        setNeedsApiPreparation(true);
+        // 想定内: 保存済みデータだけでは足りなかった。エラー表示はしない
         setStatus("");
         return;
       }
