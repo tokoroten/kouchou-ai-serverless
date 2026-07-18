@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listModels, listModelsDetailed, probeChat, requestEmbeddings } from "../lib/llm/client";
 import { prepareAndTestGeminiNano } from "../lib/llm/geminiNano";
+import { getStorageStatus, requestPersistentStorage, type StorageStatus } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
 import { isProviderConfigured, PRESETS, type PresetId, resolveEndpoint } from "../types/settings";
 
@@ -590,6 +591,87 @@ function HealthCheckCard() {
  * アプリが起動しなくなったときの復旧手段。そのため Dexie を通さず生の API で
  * 消す(この画面自体も IndexedDB を読まないので、DB が壊れていても開ける)。
  */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.round(bytes / 1e3)} KB`;
+}
+
+/**
+ * ストレージの状態表示と永続化の要求。
+ *
+ * Chrome は persist() でプロンプトを出さず、エンゲージメント等から黙って許否を
+ * 返すため、プロジェクト作成時の自動要求だけでは通らないことが多い。ここから
+ * 明示的に再要求できるようにし、拒否されている事実も見えるようにする。
+ */
+function StorageCard() {
+  const [status, setStatus] = useState<StorageStatus | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    getStorageStatus().then(setStatus);
+  }, []);
+
+  const request = async () => {
+    setRequesting(true);
+    setMessage(null);
+    const granted = await requestPersistentStorage();
+    setStatus(await getStorageStatus());
+    setMessage(
+      granted
+        ? "永続化されました。ブラウザの空き容量が逼迫しても、このサイトのデータは自動削除されません。"
+        : "ブラウザに拒否されました。Chrome はサイトの利用実績から自動判定するため、このサイトをブックマークしたり何度か利用したあとに再試行すると通ることがあります。",
+    );
+    setRequesting(false);
+  };
+
+  return (
+    <div className="card">
+      <h2>ストレージ</h2>
+      {status === null ? (
+        <p className="note">確認中...</p>
+      ) : (
+        <>
+          <p>
+            永続化: <b>{!status.supported ? "非対応のブラウザ" : status.persisted ? "有効" : "無効"}</b>
+            {status.usage !== null && (
+              <span className="note">
+                {" / "}使用量 {formatBytes(status.usage)}
+                {status.quota !== null && ` (上限 ${formatBytes(status.quota)})`}
+              </span>
+            )}
+          </p>
+          <p className="note">
+            このアプリのデータ(レポート・プロジェクト・LLM で生成した中間データ)は、
+            サーバではなくブラウザにしか存在しません。永続化が<b>無効</b>だと、
+            端末の空き容量が逼迫したときにブラウザの判断で<b>まとめて削除されることがあります</b>。 中間データは LLM
+            課金で得たものなので、消えると再取得に実費がかかります。
+          </p>
+          <p className="note">
+            永続化は<b>オリジン単位</b>で、IndexedDB・OPFS・Cache Storage
+            (ローカル埋め込みモデル)をまとめて対象にします。API ごとの指定はできません。
+          </p>
+          {status.supported && !status.persisted && (
+            <button type="button" onClick={request} disabled={requesting}>
+              {requesting ? "要求中..." : "永続化を要求する"}
+            </button>
+          )}
+          {message && (
+            <p className="note" style={{ marginTop: 8 }}>
+              {message}
+            </p>
+          )}
+          <p className="note">
+            永続化は保証ではありません(ブラウザのデータ消去操作では消えます)。 完成したレポートは JSON
+            でエクスポートしておくのが確実です。
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DangerZoneCard() {
   const [wiping, setWiping] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -715,6 +797,7 @@ export function SettingsPage() {
         />
         <p className="note">レート制限(429)が頻発する場合は並列数を下げてください。セマフォで制御されます。</p>
       </div>
+      <StorageCard />
       <DangerZoneCard />
       <button type="button" className="danger" onClick={clearAll}>
         設定をすべて削除(API キーを消去)
