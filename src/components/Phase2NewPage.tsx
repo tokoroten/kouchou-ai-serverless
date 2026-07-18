@@ -7,9 +7,9 @@ import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
 import { resolveEndpoint } from "../types/settings";
 
-// 次世代版の専用データ投入口。通常版パイプラインを経由せず、CSV から直接
+// 賛否スペクトラム分析の専用データ投入口。通常版パイプラインを経由せず、CSV から直接
 // Project を作って #/phase2/{id} へ入る(結合抽出は phase2 側で走る)。
-// 通常版ウィザードから、次世代版に不要な設定(クラスタ数・ラベリング/概要プロンプト・
+// 通常版ウィザードから、賛否スペクトラム分析に不要な設定(クラスタ数・ラベリング/概要プロンプト・
 // サンプリング数)を削いだ軽量版。それらの Project フィールドは既定値で埋める。
 
 export function Phase2NewPage() {
@@ -72,7 +72,7 @@ export function Phase2NewPage() {
       const project: Project = {
         id: crypto.randomUUID(),
         kind: "phase2",
-        title: title || "無題の次世代版",
+        title: title || "無題の賛否スペクトラム分析",
         question,
         intro: "",
         createdAt: Date.now(),
@@ -83,7 +83,7 @@ export function Phase2NewPage() {
           embedding: embeddingNow,
           concurrency: settings.concurrency,
         },
-        // 以下は通常版パイプライン用の設定。次世代版では使わないので既定値。
+        // 以下は通常版パイプライン用の設定。賛否スペクトラム分析では使わないので既定値。
         clusterNums: [],
         prompts: {
           extraction,
@@ -106,11 +106,10 @@ export function Phase2NewPage() {
 
   return (
     <div>
-      <h1>次世代版 — データを取り込む</h1>
+      <h1>賛否スペクトラム分析 — データを取り込む</h1>
       <p className="note">
-        CSV
-        を取り込んで、そのまま次世代版(インタラクティブ再クラスタリング)に入ります。通常版の実行は不要です。意見抽出・
-        stance/topics/reasons の付与・ベクトル化は「開く」の後、次世代版の画面で一括実行されます。
+        CSV を取り込んで、そのまま賛否スペクトラム分析に入ります。通常版の実行は不要です。意見抽出・
+        stance/topics/reasons の付与・ベクトル化は「開く」の後、賛否スペクトラム分析の画面で一括実行されます。
       </p>
       {settingsMissing && (
         <div className="error-box">
@@ -232,7 +231,9 @@ export function Phase2NewPage() {
           </div>
           {showPrompt && (
             <div>
-              <label>抽出プロンプト(意見分割の指針。次世代版はこれに構造化属性の指示を自動で足して1コールで実行)</label>
+              <label>
+                抽出プロンプト(意見分割の指針。賛否スペクトラム分析はこれに構造化属性の指示を自動で足して1コールで実行)
+              </label>
               <textarea
                 style={{ minHeight: 160, fontFamily: "monospace", fontSize: "0.8rem" }}
                 value={extraction}
@@ -253,7 +254,7 @@ export function Phase2NewPage() {
           disabled={creating || comments.length < 2 || settingsMissing}
           onClick={create}
         >
-          {creating ? "作成中..." : "取り込んで次世代版を開く"}
+          {creating ? "作成中..." : "取り込んで賛否スペクトラム分析を開く"}
         </button>
       </div>
     </div>

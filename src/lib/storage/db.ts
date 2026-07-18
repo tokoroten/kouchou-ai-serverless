@@ -84,7 +84,7 @@ export async function deleteProjectData(projectId: string): Promise<void> {
 }
 
 /**
- * 次世代版プロジェクトの削除。プロジェクト本体に加え、隔離した
+ * 賛否スペクトラム分析プロジェクトの削除。プロジェクト本体に加え、隔離した
  * "{projectId}-phase2" namespace の中間データ(phase2-extract / embedding /
  * codebook / phase2-edges / umap 等)もまとめて消す。
  */

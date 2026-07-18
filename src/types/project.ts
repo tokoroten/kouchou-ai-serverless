@@ -36,7 +36,7 @@ export const PIPELINE_STEPS: PipelineStepName[] = [
 
 export type ProjectStatus = "created" | "running" | "paused" | "error" | "done";
 
-// プロジェクトの所属モード。通常版と次世代版はアルゴリズムが異なり、
+// プロジェクトの所属モード。通常版と賛否スペクトラム分析はアルゴリズムが異なり、
 // 相互にデータが見えると混乱するため、一覧を領域分けするための区分。
 // 未設定(既存プロジェクト)は通常版とみなす。
 export type ProjectKind = "normal" | "phase2";

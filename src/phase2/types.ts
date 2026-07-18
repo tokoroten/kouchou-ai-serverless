@@ -1,4 +1,4 @@
-// フェーズ2(インタラクティブ再クラスタリング)のドメイン型。
+// フェーズ2(賛否スペクトラム分析)のドメイン型。
 // 一次資料 docs/INTERACTIVE_DESIGN_MEMO.md の OpinionRecord を基に、
 // docs/INTERACTIVE_DESIGN_REVIEW.md の修正(5分類への縮退を許すスキーマ等)を反映。
 

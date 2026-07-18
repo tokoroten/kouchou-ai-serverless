@@ -7,7 +7,7 @@ import { fallbackEnrichment, normalizeEnrichment } from "./enrich";
 import { EXTRACT_ENRICH_SCHEMA, buildExtractEnrichPrompt } from "./prompts";
 import type { OpinionEnrichment } from "./types";
 
-// 次世代版の投入口: 生コメントから「意見抽出 + 構造化属性付与(stance/topics/reasons 等)」を
+// 賛否スペクトラム分析の投入口: 生コメントから「意見抽出 + 構造化属性付与(stance/topics/reasons 等)」を
 // コメント1件=チャット1回でまとめて行う。通常版の extraction には依存しない。
 // - 同一の意見文字列は最初の arg_id に集約(本家 argument_map と同じ)。enrichment は初出を採用
 // - 失敗したコメントは空リスト扱いで続行。全件失敗ならエラー

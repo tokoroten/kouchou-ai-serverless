@@ -372,7 +372,7 @@ table.preview-table {
   font-size: 0.85rem;
 }
 
-/* 次世代版はまだ実験的。目立たせず、フッターの端に控えめに置く */
+/* 賛否スペクトラム分析はまだ実験的。目立たせず、フッターの端に控えめに置く */
 .footer-phase2 {
   color: var(--muted);
   text-decoration: none;

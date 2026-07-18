@@ -64,7 +64,7 @@ export function App() {
         の分析パイプラインをブラウザ内で再実装したものです。データはブラウザと選択した LLM API 以外へ送信されません。
         {" · "}
         <a href="#/phase2" className="footer-phase2">
-          次世代版
+          賛否スペクトラム分析
         </a>
       </footer>
     </div>

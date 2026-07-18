@@ -7,7 +7,7 @@ import type { EdgeSet } from "./graph";
 import type { Codebook, OpinionRecord } from "./types";
 
 // フェーズ2のデータ準備(生コメント → OpinionRecord[] + Codebook + 埋め込み + 候補辺)。
-// 次世代版は通常版の extraction/embedding には依存せず、専用の投入口で
+// 賛否スペクトラム分析は通常版の extraction/embedding には依存せず、専用の投入口で
 // 「意見抽出 + 構造化属性付与」を1コールにまとめ、意見文を独自に埋め込む。
 // すべてチェックポイント付き: 抽出は phase2-extract(コメント単位)、埋め込みはバッチ単位、
 // コードブックと辺は全体で1チャンク。

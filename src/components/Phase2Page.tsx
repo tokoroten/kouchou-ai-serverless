@@ -22,7 +22,7 @@ import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 
-// フェーズ2: インタラクティブ再クラスタリング(次世代版)。
+// フェーズ2: 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)。
 // - クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」
 // - スライダー操作では候補辺の再重み付けのみ(LLM は呼ばない)
 // - stance/reason は全体ビューでも使える(トピック類似度でゲート)。選択/絞り込み中はゲートを外す
@@ -113,7 +113,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     [isSample, project, settings],
   );
 
-  // 次世代版は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
+  // 賛否スペクトラム分析は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
   // チェックポイントも通常版(projectId)と衝突しない専用 namespace に隔離する。
   const checkpointsId = isSample ? `phase2-${projectId}` : `${projectId}-phase2`;
 
@@ -794,7 +794,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
 
   return (
     <div>
-      <h1>{isSample ? title || "サンプル" : project?.title} — 次世代版</h1>
+      <h1>{isSample ? title || "サンプル" : project?.title} — 賛否スペクトラム分析</h1>
       <p className="note">
         クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」です。スライダー操作は LLM
         を呼ばず、候補グラフの再重み付けだけで点群が連続的に再編されます。スタンス/理由は全体ビューでも
@@ -824,7 +824,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
       {!ready && !isSample && commentCount > 0 && (
         <div className="card">
           <p>
-            次世代版のデータ準備を行います(通常版とは独立した専用の投入口)。
+            賛否スペクトラム分析のデータ準備を行います(通常版とは独立した専用の投入口)。
             {commentCount.toLocaleString()} 件のコメントごとにチャット1回で「意見抽出 +
             構造化属性(stance/topics/reasons)」を まとめて取得 → 意見をベクトル化 → タグ統合 →
             候補グラフ構築、の順で処理します。
@@ -1228,9 +1228,9 @@ function Slider({
   );
 }
 
-/** フェーズ2のプロジェクト選択(トップレベルの「次世代版」から入る) */
+/** フェーズ2のプロジェクト選択(トップレベルの「賛否スペクトラム分析」から入る) */
 export function Phase2Home() {
-  // 次世代版に所属するプロジェクトのみ(通常版とは領域を分ける)
+  // 賛否スペクトラム分析に所属するプロジェクトのみ(通常版とは領域を分ける)
   const projects = useLiveQuery(
     () =>
       db.projects
@@ -1242,7 +1242,7 @@ export function Phase2Home() {
   );
   return (
     <div>
-      <h1>次世代版 — インタラクティブ再クラスタリング</h1>
+      <h1>賛否スペクトラム分析</h1>
       <p className="note">
         通常版とは別の分析モードです(クラスタリング方式が異なるため、結果は通常版のレポートとは混ざりません)。 CSV
         を取り込めば通常版を経由せずそのまま分析でき、事前分析済みサンプルでもすぐ試せます。 仕組みは{" "}
@@ -1252,8 +1252,8 @@ export function Phase2Home() {
         <div className="card" style={{ flex: 1, minWidth: 260 }}>
           <h3>CSV を取り込んで始める</h3>
           <p className="note">
-            意見の CSV を取り込むと、意見抽出・stance/topics/reasons 付与・ベクトル化まで次世代版側で一括実行します
-            (通常版の実行は不要)。
+            意見の CSV を取り込むと、意見抽出・stance/topics/reasons
+            付与・ベクトル化まで賛否スペクトラム分析側で一括実行します (通常版の実行は不要)。
           </p>
           <button type="button" className="primary" onClick={() => navigate("/phase2/new")}>
             データを取り込む
@@ -1271,7 +1271,7 @@ export function Phase2Home() {
       </div>
       {(!projects || projects.length === 0) && (
         <p className="note" style={{ marginTop: 12 }}>
-          次世代版のプロジェクトはまだありません。上の「データを取り込む」から CSV
+          賛否スペクトラム分析のプロジェクトはまだありません。上の「データを取り込む」から CSV
           を読み込むと、ここに並びます(通常版のプロジェクト/レポートとは領域が分かれています)。
         </p>
       )}
@@ -1291,7 +1291,7 @@ export function Phase2Home() {
                 type="button"
                 className="danger"
                 onClick={async () => {
-                  if (confirm(`「${project.title}」を削除しますか?(次世代版の中間データも消えます)`)) {
+                  if (confirm(`「${project.title}」を削除しますか?(賛否スペクトラム分析の中間データも消えます)`)) {
                     await deletePhase2ProjectData(project.id);
                   }
                 }}

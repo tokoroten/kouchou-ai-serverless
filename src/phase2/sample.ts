@@ -3,7 +3,7 @@ import type { Codebook, OpinionEnrichment, OpinionRecord } from "./types";
 
 // 事前分析済みサンプル(フェーズ2プレビュー)の直列化。
 // LLM 前処理済みの records + codebook + 候補辺 + 初期座標を1ファイルに固め、
-// 分析を実行しなくても次世代版 UI を試せるようにする。
+// 分析を実行しなくても賛否スペクトラム分析 UI を試せるようにする。
 
 export type Phase2Sample = {
   type: "kouchou-ai-phase2-sample";
