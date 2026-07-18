@@ -21,12 +21,14 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
   const onHoverRef = useRef(onHover);
   onClickRef.current = onClick;
   onHoverRef.current = onHover;
+  // 進行中の Plotly.react()。アンマウント時はこれの完了を待ってから purge する。
+  const pendingRef = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let cancelled = false;
-    Plotly.react(el, data, layout, { responsive: true, ...config }).then(() => {
+    pendingRef.current = Plotly.react(el, data, layout, { responsive: true, ...config }).then(() => {
       if (cancelled) return;
       // biome-ignore lint/suspicious/noExplicitAny: Plotly が拡張した HTMLElement
       const gd = el as any;
@@ -43,7 +45,12 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
   useEffect(() => {
     const el = ref.current;
     return () => {
-      if (el) Plotly.purge(el);
+      if (!el) return;
+      // 描画の途中で purge すると、Plotly 内部に残った遅延タスクが破棄済みの
+      // _fullLayout を参照して落ちる(_redrawFromAutoMarginCount の TypeError)。
+      // レイアウト Worker が座標を流し続けている最中にページを離れると起きやすい。
+      // 進行中の描画が終わってから片付ける。
+      pendingRef.current.catch(() => {}).then(() => Plotly.purge(el));
     };
   }, []);
 
