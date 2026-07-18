@@ -7,9 +7,9 @@
  */
 import { readFileSync } from "node:fs";
 import { requestChat } from "../src/lib/llm/client";
-import { parseEnrichment } from "../src/phase2/enrich";
-import { ENRICHMENT_SCHEMA, enrichmentPrompt } from "../src/phase2/prompts";
-import { STANCE_KEYS, type StanceKey, dominantStance } from "../src/phase2/types";
+import { parseEnrichment } from "../src/stance-spectrum/enrich";
+import { ENRICHMENT_SCHEMA, enrichmentPrompt } from "../src/stance-spectrum/prompts";
+import { dominantStance, STANCE_KEYS, type StanceKey } from "../src/stance-spectrum/types";
 
 type Expected = {
   text: string;

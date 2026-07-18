@@ -2,7 +2,7 @@ import { type ClusteringInput, runClusteringCore } from "../pipeline/clusteringC
 
 // クラスタリングを実行する Web Worker(DESIGN §6.3)。
 // プロトコルは進捗%だけでなく中間座標(Float32Array, transferable)を流せる形にする
-// (フェーズ2のインタラクティブモードでもそのまま使う)。
+// (賛否スペクトラム分析のインタラクティブモードでもそのまま使う)。
 
 export type WorkerRequest = { type: "run"; input: ClusteringInput } | { type: "abort" };
 

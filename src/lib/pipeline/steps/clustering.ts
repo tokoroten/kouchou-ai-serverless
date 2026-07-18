@@ -9,7 +9,7 @@ import { throwIfAborted } from "../context";
 // Node(テスト・デバッグ)では直接 clusteringCore を呼ぶ。
 
 export type ClusteringProgressExtra = {
-  /** UMAP 収束過程の中間座標(進捗表示・フェーズ2用) */
+  /** UMAP 収束過程の中間座標(進捗表示・賛否スペクトラム分析用) */
   onCoords?: (x: Float32Array, y: Float32Array) => void;
 };
 

@@ -1,27 +1,27 @@
 /**
- * フェーズ2エンジンの実データ E2E(Node)。
- *   npx vite-node scripts/phase2-e2e.ts
+ * 賛否スペクトラム分析エンジンの実データ E2E(Node)。
+ *   npx vite-node scripts/stance-spectrum-e2e.ts
  * testdata の実データ(既定150件)で 抽出→埋め込み→構造化→コードブック→候補グラフ→
  * Louvain→focus+context の stance 分裂 まで、UI を除く全経路を検証する。
- * PHASE2_N=300 PHASE2_MODEL=gpt-5-mini で調整可。
+ * STANCE_SPECTRUM_N=300 STANCE_SPECTRUM_MODEL=gpt-5-mini で調整可。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import Papa from "papaparse";
 import { normalizeComments } from "../src/lib/csv";
 import type { Checkpoints, PipelineContext } from "../src/lib/pipeline/context";
 import { embedding } from "../src/lib/pipeline/steps/embedding";
-import { trackClusters } from "../src/phase2/clusterTracker";
-import { assignTagVector, buildCodebook } from "../src/phase2/codebook";
-import { extractAndEnrich } from "../src/phase2/extractEnrich";
-import { buildCandidateEdges, clusterByLouvain, computeEdgeWeights } from "../src/phase2/graph";
-import { STANCE_LABEL_JA, summarizeCluster } from "../src/phase2/labelTemplate";
-import type { OpinionRecord } from "../src/phase2/types";
-import { DEFAULT_VIEW, dominantStance } from "../src/phase2/types";
 import { extractionPrompt } from "../src/prompts";
+import { trackClusters } from "../src/stance-spectrum/clusterTracker";
+import { assignTagVector, buildCodebook } from "../src/stance-spectrum/codebook";
+import { extractAndEnrich } from "../src/stance-spectrum/extractEnrich";
+import { buildCandidateEdges, clusterByLouvain, computeEdgeWeights } from "../src/stance-spectrum/graph";
+import { STANCE_LABEL_JA, summarizeCluster } from "../src/stance-spectrum/labelTemplate";
+import type { OpinionRecord } from "../src/stance-spectrum/types";
+import { DEFAULT_VIEW, dominantStance } from "../src/stance-spectrum/types";
 
-const N = Number(process.env.PHASE2_N ?? 150);
-const MODEL = process.env.PHASE2_MODEL ?? "gpt-5-mini";
-const STATE_DIR = "testdata/phase2-state";
+const N = Number(process.env.STANCE_SPECTRUM_N ?? 150);
+const MODEL = process.env.STANCE_SPECTRUM_MODEL ?? "gpt-5-mini";
+const STATE_DIR = "testdata/stance-spectrum-state";
 
 function env(name: string): string {
   return (

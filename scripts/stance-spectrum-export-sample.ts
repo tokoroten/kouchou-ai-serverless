@@ -1,7 +1,7 @@
 /**
- * フェーズ2の事前分析済みサンプルを public/sample-phase2.json に出力する。
- *   npx vite-node scripts/phase2-export-sample.ts
- * scripts/phase2-e2e.ts が作った testdata/phase2-state のキャッシュを再利用する
+ * 賛否スペクトラム分析の事前分析済みサンプルを public/sample-phase2.json に出力する。
+ *   npx vite-node scripts/stance-spectrum-export-sample.ts
+ * scripts/stance-spectrum-e2e.ts が作った testdata/stance-spectrum-state のキャッシュを再利用する
  * (LLM 呼び出しは全てキャッシュ済みのため API コストなし)。
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -10,15 +10,15 @@ import { normalizeComments } from "../src/lib/csv";
 import { runClusteringCore } from "../src/lib/pipeline/clusteringCore";
 import type { Checkpoints, PipelineContext } from "../src/lib/pipeline/context";
 import { embedding } from "../src/lib/pipeline/steps/embedding";
-import { assignTagVector, buildCodebook } from "../src/phase2/codebook";
-import { extractAndEnrich } from "../src/phase2/extractEnrich";
-import { buildCandidateEdges } from "../src/phase2/graph";
-import { serializeSample } from "../src/phase2/sample";
-import type { OpinionRecord } from "../src/phase2/types";
 import { extractionPrompt } from "../src/prompts";
+import { assignTagVector, buildCodebook } from "../src/stance-spectrum/codebook";
+import { extractAndEnrich } from "../src/stance-spectrum/extractEnrich";
+import { buildCandidateEdges } from "../src/stance-spectrum/graph";
+import { serializeSample } from "../src/stance-spectrum/sample";
+import type { OpinionRecord } from "../src/stance-spectrum/types";
 
-const N = Number(process.env.PHASE2_N ?? 150);
-const STATE_DIR = "testdata/phase2-state";
+const N = Number(process.env.STANCE_SPECTRUM_N ?? 150);
+const STATE_DIR = "testdata/stance-spectrum-state";
 
 function env(name: string): string {
   return (

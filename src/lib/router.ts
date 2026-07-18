@@ -12,6 +12,13 @@ export function useHashRoute(): string {
   return hash;
 }
 
-export function navigate(path: string): void {
+export function navigate(path: string, options?: { replace?: boolean }): void {
+  // replace: 履歴を積まずに現在のエントリを差し替える(旧ルートの読み替え用)。
+  // replaceState は hashchange を発火しないため、自分で通知する。
+  if (options?.replace) {
+    window.history.replaceState(null, "", `#${path}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    return;
+  }
   window.location.hash = path;
 }

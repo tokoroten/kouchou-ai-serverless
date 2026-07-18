@@ -1,7 +1,7 @@
 import type { StanceDistribution } from "./types";
 import { STANCE_KEYS } from "./types";
 
-// フェーズ2の類似度計算(一次資料「類似度と距離」+ レビューの置換表)。
+// 賛否スペクトラム分析の類似度計算(一次資料「類似度と距離」+ レビューの置換表)。
 // - stance: 順序付き7クラスなので累積分布の L1(=1次元 Wasserstein)を既定とする
 // - topic/reason: コードブックに対する疎タグベクトルのコサイン類似度
 // - semantic: 埋め込みのコサイン類似度

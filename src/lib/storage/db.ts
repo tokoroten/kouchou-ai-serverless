@@ -88,7 +88,7 @@ export async function deleteProjectData(projectId: string): Promise<void> {
  * "{projectId}-phase2" namespace の中間データ(phase2-extract / embedding /
  * codebook / phase2-edges / umap 等)もまとめて消す。
  */
-export async function deletePhase2ProjectData(projectId: string): Promise<void> {
+export async function deleteStanceSpectrumProjectData(projectId: string): Promise<void> {
   const phase2Id = `${projectId}-phase2`;
   await db.transaction("rw", db.projects, db.stepResults, db.extractionCache, db.chunkCache, async () => {
     await db.projects.delete(projectId);

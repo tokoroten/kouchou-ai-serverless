@@ -1,11 +1,11 @@
 import type { EdgeSet } from "./graph";
 import type { Codebook, OpinionEnrichment, OpinionRecord } from "./types";
 
-// 事前分析済みサンプル(フェーズ2プレビュー)の直列化。
+// 事前分析済みサンプル(賛否スペクトラム分析プレビュー)の直列化。
 // LLM 前処理済みの records + codebook + 候補辺 + 初期座標を1ファイルに固め、
 // 分析を実行しなくても賛否スペクトラム分析 UI を試せるようにする。
 
-export type Phase2Sample = {
+export type StanceSpectrumSample = {
   type: "kouchou-ai-phase2-sample";
   title: string;
   records: SerializedRecord[];
@@ -38,7 +38,7 @@ export function serializeSample(
   codebook: Codebook,
   edges: EdgeSet,
   coords: { x: Float32Array; y: Float32Array },
-): Phase2Sample {
+): StanceSpectrumSample {
   return {
     type: "kouchou-ai-phase2-sample",
     title,
@@ -70,14 +70,15 @@ export function serializeSample(
   };
 }
 
-export function deserializeSample(sample: Phase2Sample): {
+export function deserializeSample(sample: StanceSpectrumSample): {
   title: string;
   records: OpinionRecord[];
   codebook: Codebook;
   edges: EdgeSet;
   coords: { x: Float32Array; y: Float32Array };
 } {
-  if (sample.type !== "kouchou-ai-phase2-sample") throw new Error("フェーズ2サンプルのファイルではありません");
+  if (sample.type !== "kouchou-ai-phase2-sample")
+    throw new Error("賛否スペクトラム分析サンプルのファイルではありません");
   const records: OpinionRecord[] = sample.records.map((r) => ({
     id: r.id,
     originalCommentId: r.commentId,

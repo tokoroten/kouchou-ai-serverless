@@ -6,33 +6,33 @@ import { extractAndEnrich } from "./extractEnrich";
 import type { EdgeSet } from "./graph";
 import type { Codebook, OpinionRecord } from "./types";
 
-// フェーズ2のデータ準備(生コメント → OpinionRecord[] + Codebook + 埋め込み + 候補辺)。
+// 賛否スペクトラム分析のデータ準備(生コメント → OpinionRecord[] + Codebook + 埋め込み + 候補辺)。
 // 賛否スペクトラム分析は通常版の extraction/embedding には依存せず、専用の投入口で
 // 「意見抽出 + 構造化属性付与」を1コールにまとめ、意見文を独自に埋め込む。
 // すべてチェックポイント付き: 抽出は phase2-extract(コメント単位)、埋め込みはバッチ単位、
 // コードブックと辺は全体で1チャンク。
 
-export type Phase2Data = {
+export type StanceSpectrumData = {
   records: OpinionRecord[];
   codebook: Codebook;
   embedding: EmbeddingResult;
 };
 
-export type Phase2Status = (message: string, done?: number, total?: number) => void;
+export type StanceSpectrumStatus = (message: string, done?: number, total?: number) => void;
 
-export async function preparePhase2Records(
+export async function prepareStanceSpectrumRecords(
   comments: CommentRow[],
   extractionPrompt: string,
   ctx: PipelineContext,
-  onStatus?: Phase2Status,
-): Promise<Phase2Data> {
+  onStatus?: StanceSpectrumStatus,
+): Promise<StanceSpectrumData> {
   // 1. 結合抽出: 生コメント → 意見(argument) + 構造化属性(stance/topics/reasons 等)
   onStatus?.("意見抽出 + 構造化属性付与...", 0, comments.length);
   const { args, relations, enrichments } = await extractAndEnrich(comments, extractionPrompt, ctx, (done, total) =>
     onStatus?.("意見抽出 + 構造化属性付与...", done, total),
   );
 
-  // 2. 意見文の埋め込み(通常版とは独立。phase2 隔離チェックポイントに保存)
+  // 2. 意見文の埋め込み(通常版とは独立。賛否スペクトラム分析の隔離チェックポイントに保存)
   onStatus?.("意見のベクトル化...", 0, args.length);
   const embeddingResult = await embedding(args, {
     ...ctx,
@@ -61,7 +61,7 @@ export async function buildEdgesWithWorker(
   records: OpinionRecord[],
   embedding: EmbeddingResult,
   ctx: PipelineContext,
-  onStatus?: Phase2Status,
+  onStatus?: StanceSpectrumStatus,
 ): Promise<EdgeSet> {
   const cacheKey = `v1/${records.length}`;
   const cached = await ctx.checkpoints.getChunk("phase2-edges", cacheKey);

@@ -1,16 +1,29 @@
+import { useEffect } from "react";
 import { HomePage } from "./components/HomePage";
 import { InteractivePage } from "./components/InteractivePage";
-import { Phase2AboutPage } from "./components/Phase2AboutPage";
-import { Phase2NewPage } from "./components/Phase2NewPage";
-import { Phase2Home, Phase2Page } from "./components/Phase2Page";
 import { RunPage } from "./components/RunPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { StanceSpectrumAboutPage } from "./components/StanceSpectrumAboutPage";
+import { StanceSpectrumNewPage } from "./components/StanceSpectrumNewPage";
+import { StanceSpectrumHome, StanceSpectrumPage } from "./components/StanceSpectrumPage";
 import { ViewerPage } from "./components/ViewerPage";
 import { WizardPage } from "./components/WizardPage";
-import { useHashRoute } from "./lib/router";
+import { navigate, useHashRoute } from "./lib/router";
+
+// 旧ルート #/phase2... は 2026-07-18 のリネームで #/stance-spectrum... になった。
+// 既存のブックマークや共有リンクを壊さないよう、同じパス構造のまま読み替える。
+const LEGACY_ROUTE_PREFIX = "/phase2";
 
 export function App() {
   const route = useHashRoute();
+  const isLegacyRoute = route === LEGACY_ROUTE_PREFIX || route.startsWith(`${LEGACY_ROUTE_PREFIX}/`);
+
+  useEffect(() => {
+    if (!isLegacyRoute) return;
+    navigate(`/stance-spectrum${route.slice(LEGACY_ROUTE_PREFIX.length)}`, { replace: true });
+  }, [isLegacyRoute, route]);
+
+  if (isLegacyRoute) return null;
 
   let page: React.ReactNode;
   if (route === "/" || route === "") {
@@ -25,14 +38,14 @@ export function App() {
     page = <ViewerPage reportId={route.slice("/report/".length)} />;
   } else if (route.startsWith("/interactive/")) {
     page = <InteractivePage projectId={route.slice("/interactive/".length)} />;
-  } else if (route === "/phase2") {
-    page = <Phase2Home />;
-  } else if (route === "/phase2/new") {
-    page = <Phase2NewPage />;
-  } else if (route === "/phase2/about") {
-    page = <Phase2AboutPage />;
-  } else if (route.startsWith("/phase2/")) {
-    page = <Phase2Page projectId={route.slice("/phase2/".length)} />;
+  } else if (route === "/stance-spectrum") {
+    page = <StanceSpectrumHome />;
+  } else if (route === "/stance-spectrum/new") {
+    page = <StanceSpectrumNewPage />;
+  } else if (route === "/stance-spectrum/about") {
+    page = <StanceSpectrumAboutPage />;
+  } else if (route.startsWith("/stance-spectrum/")) {
+    page = <StanceSpectrumPage projectId={route.slice("/stance-spectrum/".length)} />;
   } else {
     page = <p>ページが見つかりません。</p>;
   }
@@ -63,7 +76,7 @@ export function App() {
         </a>
         の分析パイプラインをブラウザ内で再実装したものです。データはブラウザと選択した LLM API 以外へ送信されません。
         {" · "}
-        <a href="#/phase2" className="footer-phase2">
+        <a href="#/stance-spectrum" className="footer-stance-spectrum">
           賛否スペクトラム分析
         </a>
       </footer>
