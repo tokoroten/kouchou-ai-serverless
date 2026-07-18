@@ -50,6 +50,23 @@ export type ReportRow = {
   serviceTier?: string;
 };
 
+/**
+ * レポートに紐づく生成画像(ポンチ絵)。
+ *
+ * reports 本体ではなく別テーブルに置く。一覧画面は db.reports.toArray() で全行を
+ * 読むため、Blob を ReportRow に入れると一覧を開くたびに全画像を構造化複製で
+ * 読み込むことになる。別テーブルなら一覧はこのテーブルに触れない。
+ */
+export type ReportImageRow = {
+  reportId: string;
+  blob: Blob;
+  /** 生成に使ったプロンプト(再生成時の参考・デバッグ用) */
+  prompt: string;
+  /** 生成に使ったモデル(コスト把握用) */
+  model: string;
+  createdAt: number;
+};
+
 export const DB_NAME = "kouchou-ai-serverless";
 
 export const db = new Dexie(DB_NAME) as Dexie & {
@@ -58,6 +75,7 @@ export const db = new Dexie(DB_NAME) as Dexie & {
   extractionCache: Table<ExtractionCacheRow, [string, string]>;
   chunkCache: Table<ChunkCacheRow, [string, string, string]>;
   reports: EntityTable<ReportRow, "id">;
+  reportImages: EntityTable<ReportImageRow, "reportId">;
 };
 
 db.version(1).stores({
@@ -149,6 +167,10 @@ db.version(2)
       }
     }
   });
+
+// v3: レポートのポンチ絵を置く reportImages を追加する。
+// 既存データの変換は不要なので upgrade は無い(純粋な store 追加)。
+db.version(3).stores({ reportImages: "reportId" });
 
 type MigratableRow = { projectId: string; step?: unknown; commentId?: unknown; key?: unknown };
 
@@ -261,6 +283,35 @@ export async function resetPostprocess(projectId: string): Promise<void> {
     // UMAP 座標(step="umap")はデータ本体が変わらない限り有効なため残す
     await db.chunkCache.where("[projectId+step]").equals([projectId, "clustering"]).delete();
   });
+}
+
+/**
+ * レポートと、それに紐づく生成画像をまとめて削除する。
+ *
+ * 画像を別ストア(OPFS 等)に置くとこの不変条件をコード規律で守り続けることに
+ * なり、消し忘れた画像が孤児として残る。同じ DB のトランザクションに載せることで
+ * 「レポートを消せば画像も消える」を構造的に保証する。
+ */
+export async function deleteReportWithImage(reportId: string): Promise<void> {
+  await db.transaction("rw", db.reports, db.reportImages, async () => {
+    await db.reports.delete(reportId);
+    await db.reportImages.delete(reportId);
+  });
+}
+
+/** レポートのポンチ絵を保存する(1レポート1枚。再生成時は置き換え) */
+export async function putReportImage(row: ReportImageRow): Promise<void> {
+  await db.reportImages.put(row);
+}
+
+/** レポートのポンチ絵を取得する。無ければ undefined */
+export async function getReportImage(reportId: string): Promise<ReportImageRow | undefined> {
+  return db.reportImages.get(reportId);
+}
+
+/** レポートのポンチ絵を削除する */
+export async function deleteReportImage(reportId: string): Promise<void> {
+  await db.reportImages.delete(reportId);
 }
 
 /** レポート完成後に中間データのみ削除する(容量対策) */

@@ -3,7 +3,7 @@ import { useRef } from "react";
 import { exportResultJson, parsePreprocessed, parseResultJson } from "../lib/export";
 import { navigate } from "../lib/router";
 import { dexieStepStore } from "../lib/storage/checkpoints";
-import { db, deleteProjectData, requestPersistentStorage } from "../lib/storage/db";
+import { db, deleteProjectData, deleteReportWithImage, requestPersistentStorage } from "../lib/storage/db";
 import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
@@ -215,7 +215,8 @@ export function HomePage() {
                 className="danger"
                 onClick={async () => {
                   if (confirm(`レポート「${report.title}」を削除しますか?`)) {
-                    await db.reports.delete(report.id);
+                    // ポンチ絵も同じトランザクションで消す(孤児を残さない)
+                    await deleteReportWithImage(report.id);
                   }
                 }}
               >
