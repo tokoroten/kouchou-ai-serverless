@@ -1,6 +1,7 @@
 import { requestChat } from "../lib/llm/client";
 import { parseJsonObjectLoose } from "../lib/llm/jsonParse";
 import type { PipelineContext } from "../lib/pipeline/context";
+import { throwIfCacheOnly } from "../lib/pipeline/context";
 import { CODEBOOK_SCHEMA, codebookPrompt } from "./prompts";
 import type { Codebook, OpinionEnrichment, WeightedTag } from "./types";
 
@@ -83,6 +84,7 @@ export async function buildCodebook(enrichments: OpinionEnrichment[], ctx: Pipel
   const cached = await ctx.checkpoints.getChunk("codebook", "v1");
   if (cached) return deserializeCodebook(cached);
 
+  throwIfCacheOnly(ctx, "タグのコードブック統合");
   const topicTags = collectTags(enrichments, "topics");
   const reasonTags = collectTags(enrichments, "reasons");
   const [topicResult, reasonResult] = await Promise.all([

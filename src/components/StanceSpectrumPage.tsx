@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseLabelResponse } from "../lib/llm/jsonParse";
 import { fnv1a } from "../lib/pipeline/clusterTable";
-import type { PipelineContext } from "../lib/pipeline/context";
+import { CacheMissError, type PipelineContext } from "../lib/pipeline/context";
 import { navigate } from "../lib/router";
 import { dexieCheckpoints } from "../lib/storage/checkpoints";
 import { db, deleteStanceSpectrumProjectData } from "../lib/storage/db";
@@ -44,7 +44,7 @@ export const STANCE_SPECTRUM_SAMPLES = [
     id: "sample",
     file: "sample-stance-spectrum.json",
     title: "AI人権法案への意見(150コメント・543意見)",
-    note: "API キーなしでスライダー操作・クラスタ分裂を体験できます。",
+    note: "スライダー操作・クラスタ分裂は API キーなしで体験できます(LLM ラベル生成のみ設定が必要)。",
   },
   {
     id: "sample-survey",
@@ -64,6 +64,10 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // 保存済みチェックポイントからの自動復元中(API は呼ばない)
+  const [restoring, setRestoring] = useState(false);
+  // 復元だけでは足りず、API を使う準備が必要だと分かった
+  const [needsApiPreparation, setNeedsApiPreparation] = useState(false);
   // データ準備で消費した累計トークン(意見抽出+enrich+コードブック+埋め込み)
   const [usage, setUsage] = useState({ input: 0, output: 0, total: 0 });
   const [records, setRecords] = useState<OpinionRecord[] | null>(null);
@@ -86,6 +90,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   const [labeling, setLabeling] = useState(false);
   const [savedViews, setSavedViews] = useState<ClusterView[]>([]);
 
+  // 自動復元は1プロジェクトにつき1回だけ試す(失敗後にループしないため)
+  const restoreAttemptedRef = useRef(false);
   const layoutWorkerRef = useRef<Worker | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const assignmentRef = useRef<TrackedAssignment | null>(null);
@@ -166,10 +172,14 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   }, [isSample, sampleDef, records]);
 
   // ---- データ準備(結合抽出 → 埋め込み → codebook → 候補辺 → 初期座標) ----
-  const prepare = async () => {
-    const ctx = buildCtx();
-    if (!ctx || !project) return;
-    setPreparing(true);
+  // 各ステップはチェックポイントで短絡するので、すべて保存済みなら API を一切呼ばずに復元できる。
+  // cacheOnly=true はその「復元だけ」を保証するモード(足りなければ CacheMissError で中断)。
+  const prepare = async ({ cacheOnly = false } = {}) => {
+    const base = buildCtx();
+    if (!base || !project) return;
+    const ctx: PipelineContext = { ...base, cacheOnly };
+    if (cacheOnly) setRestoring(true);
+    else setPreparing(true);
     setError(null);
     setUsage({ input: 0, output: 0, total: 0 });
     try {
@@ -209,15 +219,34 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       }
       setCoords({ x: initial.x.slice(), y: initial.y.slice() });
       startLayout(initial, recs, edgeSet);
-      setStatus("準備完了 — スライダーで再クラスタリングできます");
+      setStatus(cacheOnly ? "保存済みデータから復元しました" : "準備完了 — スライダーで再クラスタリングできます");
     } catch (e) {
+      if (e instanceof CacheMissError) {
+        // 復元だけでは足りなかった。API を使う準備が要ることをボタンで示す
+        setNeedsApiPreparation(true);
+        setStatus("");
+        return;
+      }
       if (!(e instanceof DOMException && e.name === "AbortError")) {
         setError(e instanceof Error ? e.message : String(e));
       }
     } finally {
       setPreparing(false);
+      setRestoring(false);
     }
   };
+
+  // 保存済みチェックポイントがあれば、ボタンを押させずに自動で復元してレイアウトまで進める。
+  // records/edges/coords は React state にしか無いため、リロードのたびにここを通る。
+  // 抽出・埋め込み・コードブックがすべてキャッシュ済みなら API 呼び出しはゼロで、
+  // 足りなければ CacheMissError で中断して準備ボタンに切り替わる(黙って課金しない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: prepare は毎レンダ再生成されるため依存に入れない。復元は条件が揃った初回のみ
+  useEffect(() => {
+    if (isSample || !project || records || restoring || preparing || restoreAttemptedRef.current) return;
+    if (project.comments.length === 0) return;
+    restoreAttemptedRef.current = true;
+    prepare({ cacheOnly: true });
+  }, [isSample, project, records, restoring, preparing]);
 
   function runUmapOnce(emb: EmbeddingResult, onProgress: (done: number, total: number) => void): Promise<Coords> {
     return new Promise((resolve, reject) => {
@@ -797,6 +826,14 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   if (!isSample && !project) return <p>読み込み中...</p>;
   const commentCount = project?.comments.length ?? 0;
   const ready = !!(records && edges && coords);
+
+  // ラベル生成が押せない理由。サンプルは設定ゲートを通らずに入れるため、
+  // 未設定のまま «無言でグレーアウト» になりやすい。理由を必ず言葉で出す。
+  const labelDisabledReason = !chatEndpoint.baseUrl
+    ? "設定画面でチャットプロバイダを設定すると使えます。"
+    : clusterSummaries.length === 0
+      ? "レイアウトが収束してクラスタが確定すると使えます。"
+      : "";
   const selectedAttrInfo = attributeInfos.find((a) => a.key === view.attributeKey);
 
   // 累計トークン → コスト概算(チャットモデル単価ベース。ローカル実行や単価不明は費用非表示)
@@ -836,21 +873,33 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {!ready && !isSample && commentCount > 0 && (
+      {/* 保存済みデータからの自動復元中。API は呼ばないのでボタンは出さない */}
+      {!ready && !isSample && commentCount > 0 && restoring && (
         <div className="card">
           <p>
-            賛否スペクトラム分析のデータ準備を行います(通常版とは独立した専用の投入口)。
-            {commentCount.toLocaleString()} 件のコメントごとにチャット1回で「意見抽出 +
+            保存済みデータから復元しています...
+            <br />
+            <span className="note">{status || "チェックポイントを読み込み中(API 呼び出しはありません)"}</span>
+          </p>
+        </div>
+      )}
+
+      {/* 復元では足りず、API を使う処理が必要なときだけ準備ボタンを出す */}
+      {!ready && !isSample && commentCount > 0 && !restoring && needsApiPreparation && (
+        <div className="card">
+          <p>
+            この分析にはまだ実行していない処理があるため、LLM API を使うデータ準備が必要です(通常版とは独立した
+            専用の投入口)。{commentCount.toLocaleString()} 件のコメントごとにチャット1回で「意見抽出 +
             構造化属性(stance/topics/reasons)」を まとめて取得 → 意見をベクトル化 → タグ統合 →
             候補グラフ構築、の順で処理します。
             <br />
             <span className="note">
               使用モデル: {chatEndpoint.model}(推奨: gpt-5-mini — Phase 0 検証で stance 分類 19/19 全問正解)。
-              コメント単位で保存され、再実行時はスキップされます。
+              コメント単位で保存されるため、すでに終わっている分は課金されません。
             </span>
           </p>
-          <button type="button" className="primary" onClick={prepare} disabled={preparing}>
-            {preparing ? "準備中..." : "賛否スペクトラム分析データを準備"}
+          <button type="button" className="primary" onClick={() => prepare()} disabled={preparing}>
+            {preparing ? "準備中..." : "データ準備を実行(LLM API を使用)"}
           </button>
           <span className="note" style={{ marginLeft: 12 }}>
             {status}
@@ -1043,11 +1092,26 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 onClick={generateLlmLabels}
-                disabled={labeling || !chatEndpoint.baseUrl || clusterSummaries.length === 0}
-                title="現在のクラスタごとに LLM でラベルと説明文を生成します(クラスタ毎に1コール・構成ハッシュでキャッシュ)。押すたびに現在の切り方に対して生成/再利用します"
+                disabled={labeling || !!labelDisabledReason}
+                title={
+                  labelDisabledReason ||
+                  "現在のクラスタごとに LLM でラベルと説明文を生成します(クラスタ毎に1コール・構成ハッシュでキャッシュ)。押すたびに現在の切り方に対して生成/再利用します"
+                }
               >
                 {labeling ? "ラベル生成中..." : "LLMでラベル生成"}
               </button>
+              {/* 押せない理由は tooltip だけだと気づかれないので、その場に文言として出す */}
+              {labelDisabledReason && (
+                <span className="note">
+                  {labelDisabledReason}
+                  {!chatEndpoint.baseUrl && (
+                    <>
+                      {" "}
+                      <a href="#/settings">設定を開く</a>
+                    </>
+                  )}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={saveCurrentView}

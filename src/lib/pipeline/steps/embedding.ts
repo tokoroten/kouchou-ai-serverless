@@ -2,7 +2,7 @@ import type { EmbeddingResult, ExtractedArgument } from "../../../types/project"
 import { requestEmbeddings } from "../../llm/client";
 import { isLocalEmbedding } from "../../llm/localEmbedding";
 import type { PipelineContext } from "../context";
-import { throwIfAborted } from "../context";
+import { throwIfAborted, throwIfCacheOnly } from "../context";
 
 // 本家 steps/embedding.py の移植。
 // ブラウザではペイロードとタイムアウトを考慮しバッチ100件(本家は1000)。
@@ -26,6 +26,7 @@ export async function embedding(args: ExtractedArgument[], ctx: PipelineContext)
     const key = `${local ? "local:" : ""}${ctx.embedding.model}/${BATCH}/${batchIndex}`;
     let flat: Float32Array | undefined = await ctx.checkpoints.getChunk("embedding", key);
     if (flat === undefined) {
+      throwIfCacheOnly(ctx, `埋め込み (バッチ ${batchIndex + 1}/${total})`);
       const start = batchIndex * BATCH;
       const batchTexts = texts.slice(start, start + BATCH);
       let vectors: Float32Array[];

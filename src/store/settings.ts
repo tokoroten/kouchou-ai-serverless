@@ -62,7 +62,22 @@ export const useSettings = create<SettingsStore>()(
     {
       name: "kouchou-ai-settings",
       version: 2,
-      migrate: () => ({ settings: DEFAULT_SETTINGS }),
+      // 以前はバージョンを上げるたびに DEFAULT_SETTINGS で全上書きしていたため、
+      // API キーもモデル選択も消えていた(ラベル生成が理由も分からず押せなくなる原因)。
+      // 欠けているフィールドだけを既定値で補い、ユーザが入力した値は保持する。
+      migrate: (persisted) => {
+        const saved = (persisted as { settings?: Partial<Settings> } | undefined)?.settings;
+        if (!saved) return { settings: DEFAULT_SETTINGS };
+        return {
+          settings: {
+            ...DEFAULT_SETTINGS,
+            ...saved,
+            providers: { ...DEFAULT_SETTINGS.providers, ...saved.providers },
+            chatSlot: { ...DEFAULT_SETTINGS.chatSlot, ...saved.chatSlot },
+            embeddingSlot: { ...DEFAULT_SETTINGS.embeddingSlot, ...saved.embeddingSlot },
+          },
+        };
+      },
     },
   ),
 );

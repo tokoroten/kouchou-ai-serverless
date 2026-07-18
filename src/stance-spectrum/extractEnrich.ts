@@ -1,7 +1,7 @@
 import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseJsonObjectLoose } from "../lib/llm/jsonParse";
 import type { PipelineContext } from "../lib/pipeline/context";
-import { throwIfAborted } from "../lib/pipeline/context";
+import { throwIfAborted, throwIfCacheOnly } from "../lib/pipeline/context";
 import type { CommentRow, ExtractedArgument, Relation } from "../types/project";
 import { fallbackEnrichment, normalizeEnrichment } from "./enrich";
 import { buildExtractEnrichPrompt, EXTRACT_ENRICH_SCHEMA } from "./prompts";
@@ -48,6 +48,7 @@ export async function extractAndEnrich(
         if (cached !== undefined) {
           perComment[index] = cached as RawOpinion[];
         } else {
+          throwIfCacheOnly(ctx, `意見抽出 (コメント ${comment.commentId})`);
           perComment[index] = await extractEnrichOne(comment.body, systemPrompt, ctx);
           await ctx.checkpoints.putChunk(CHUNK_STEP.extract, comment.commentId, perComment[index]);
         }
