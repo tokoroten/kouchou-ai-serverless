@@ -159,7 +159,18 @@ db.on("blocked", () => {
   alert("データの更新のため、このアプリを開いている他のタブを閉じてから再読み込みしてください。");
 });
 
-/** 初回プロジェクト作成時に永続ストレージを要求する(DESIGN §5.3) */
+/**
+ * 永続ストレージを要求する(DESIGN §5.3)。
+ *
+ * persist() はオリジン単位で、IndexedDB / OPFS / Cache Storage / localStorage を
+ * まとめて eviction の対象外にする(API ごとの指定はできない)。本アプリが保存する
+ * のは LLM 課金で得た中間データで、消えると実費が再発生するうえ、サーバを持たない
+ * ためブラウザが唯一の保管場所になる。
+ *
+ * ただし Chrome はプロンプトを出さず、サイトのエンゲージメントやブックマークの
+ * 有無などから黙って許可/拒否を返す。したがって初回作成時の1回で通るとは限らず、
+ * 拒否されても分からない。設定画面から明示的に再要求できるようにしてある。
+ */
 export async function requestPersistentStorage(): Promise<boolean> {
   try {
     if (navigator.storage?.persist) {
@@ -171,6 +182,41 @@ export async function requestPersistentStorage(): Promise<boolean> {
     // 非対応ブラウザ
   }
   return false;
+}
+
+export type StorageStatus = {
+  /** 永続化 API に対応しているか */
+  supported: boolean;
+  /** eviction の対象外になっているか */
+  persisted: boolean;
+  /** 使用量(バイト)。取得できなければ null */
+  usage: number | null;
+  /** 割り当て上限(バイト)。取得できなければ null */
+  quota: number | null;
+};
+
+/** 設定画面に出すストレージの状態 */
+export async function getStorageStatus(): Promise<StorageStatus> {
+  const status: StorageStatus = { supported: false, persisted: false, usage: null, quota: null };
+  if (typeof navigator === "undefined" || !navigator.storage) return status;
+  status.supported = typeof navigator.storage.persist === "function";
+  try {
+    if (typeof navigator.storage.persisted === "function") {
+      status.persisted = await navigator.storage.persisted();
+    }
+  } catch {
+    // 取得できなければ既定値のまま
+  }
+  try {
+    if (typeof navigator.storage.estimate === "function") {
+      const estimate = await navigator.storage.estimate();
+      status.usage = estimate.usage ?? null;
+      status.quota = estimate.quota ?? null;
+    }
+  } catch {
+    // 同上
+  }
+  return status;
 }
 
 /** プロジェクトと中間データを削除する */
