@@ -13,6 +13,13 @@ import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../st
 import { STANCE_LABEL_JA, summarizeCluster } from "../stance-spectrum/labelTemplate";
 import { buildEdgesWithWorker, prepareStanceSpectrumRecords } from "../stance-spectrum/prepare";
 import { deserializeSample, serializeSample } from "../stance-spectrum/sample";
+import {
+  CHUNK_STEP,
+  EXPORT_FILE_SUFFIX,
+  PROJECT_KIND,
+  projectNamespace,
+  sampleNamespace,
+} from "../stance-spectrum/storageKeys";
 import type { ClusterView, Codebook, OpinionRecord } from "../stance-spectrum/types";
 import { DEFAULT_VIEW, dominantStance, stanceScore } from "../stance-spectrum/types";
 import { useSettings } from "../store/settings";
@@ -22,7 +29,7 @@ import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
 
-// 賛否スペクトラム分析: 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)。
+// 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング / 次世代版)。
 // - クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」
 // - スライダー操作では候補辺の再重み付けのみ(LLM は呼ばない)
 // - stance/reason は全体ビューでも使える(トピック類似度でゲート)。選択/絞り込み中はゲートを外す
@@ -35,13 +42,13 @@ type Coords = { x: Float32Array; y: Float32Array };
 export const STANCE_SPECTRUM_SAMPLES = [
   {
     id: "sample",
-    file: "sample-phase2.json",
+    file: "sample-stance-spectrum.json",
     title: "AI人権法案への意見(150コメント・543意見)",
     note: "API キーなしでスライダー操作・クラスタ分裂を体験できます。",
   },
   {
     id: "sample-survey",
-    file: "sample-phase2-survey.json",
+    file: "sample-stance-spectrum-survey.json",
     title: "仮想アンケート 2,000件(3,098意見)",
     note: "大きめの実データ。Ward クラスタリングや属性軸を試せます(約8MB・初回読み込みは少し時間がかかります)。",
   },
@@ -115,7 +122,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
 
   // 賛否スペクトラム分析は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
   // チェックポイントも通常版(projectId)と衝突しない専用 namespace に隔離する。
-  const checkpointsId = isSample ? `phase2-${projectId}` : `${projectId}-phase2`;
+  const checkpointsId = isSample ? sampleNamespace(projectId) : projectNamespace(projectId);
 
   const buildCtx = useCallback((): PipelineContext | null => {
     if (!isSample && !project) return null;
@@ -652,7 +659,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
     try {
       const checkpoints = dexieCheckpoints(checkpointsId);
       const compositionKey = summary.hash;
-      const cached = await checkpoints.getChunk("phase2-explain", compositionKey);
+      const cached = await checkpoints.getChunk(CHUNK_STEP.explain, compositionKey);
       if (typeof cached === "string") {
         setExplanation({ clusterId, text: cached });
         return;
@@ -678,7 +685,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
           { role: "user", content: input },
         ],
       });
-      await checkpoints.putChunk("phase2-explain", compositionKey, text);
+      await checkpoints.putChunk(CHUNK_STEP.explain, compositionKey, text);
       setExplanation({ clusterId, text });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -704,7 +711,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
         clusterSummaries.map((summary) =>
           semaphore.run(async () => {
             const key = summary.hash;
-            let result = (await checkpoints.getChunk("phase2-label", key)) as
+            let result = (await checkpoints.getChunk(CHUNK_STEP.label, key)) as
               | { label: string; description: string }
               | undefined;
             if (!result || typeof result.label !== "string") {
@@ -733,7 +740,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               result = parsed
                 ? { label: parsed.label, description: parsed.description }
                 : { label: summary.label, description: "" };
-              await checkpoints.putChunk("phase2-label", key, result);
+              await checkpoints.putChunk(CHUNK_STEP.label, key, result);
             }
             const value = result;
             setLlmLabels((m) => new Map(m).set(key, value));
@@ -753,14 +760,14 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   // ---- ビュー定義の保存/復元 ----
   useEffect(() => {
     dexieCheckpoints(checkpointsId)
-      .getChunk("phase2-views", "list")
+      .getChunk(CHUNK_STEP.views, "list")
       .then((saved) => {
         if (Array.isArray(saved)) setSavedViews(saved);
       });
   }, [checkpointsId]);
 
   // 現在の分析データ(意見・タグ・コードブック・候補グラフ・全体座標)を JSON で保存する。
-  // 形式は事前分析済みサンプル(sample-phase2.json)と同一。
+  // 形式は事前分析済みサンプル(public/sample-stance-spectrum.json)と同一。
   const downloadJson = () => {
     if (!records || !codebook || !edges) return;
     const coordsForExport = scope ? globalCoordsRef.current : coords;
@@ -768,13 +775,13 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       setError("JSON 保存には全体ビューの座標が必要です。ドリルダウンを解除してから実行してください。");
       return;
     }
-    const name = (isSample ? title : project?.title) || "phase2";
+    const name = (isSample ? title : project?.title) || "stance-spectrum";
     const sample = serializeSample(name, records, codebook, edges, coordsForExport);
     const blob = new Blob([JSON.stringify(sample)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${name}.phase2.json`;
+    a.download = `${name}${EXPORT_FILE_SUFFIX}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -784,7 +791,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
     if (!name) return;
     const next = [...savedViews.filter((v) => v.name !== name), { ...view, name }];
     setSavedViews(next);
-    await dexieCheckpoints(checkpointsId).putChunk("phase2-views", "list", next);
+    await dexieCheckpoints(checkpointsId).putChunk(CHUNK_STEP.views, "list", next);
   };
 
   if (!isSample && !project) return <p>読み込み中...</p>;
@@ -1244,7 +1251,7 @@ export function StanceSpectrumHome() {
       db.projects
         .orderBy("createdAt")
         .reverse()
-        .filter((p) => p.kind === "phase2")
+        .filter((p) => p.kind === PROJECT_KIND)
         .toArray(),
     [],
   );

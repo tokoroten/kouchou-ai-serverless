@@ -1,5 +1,5 @@
 /**
- * 賛否スペクトラム分析の事前分析済みサンプルを public/sample-phase2.json に出力する。
+ * 賛否スペクトラム分析の事前分析済みサンプルを public/sample-stance-spectrum.json に出力する。
  *   npx vite-node scripts/stance-spectrum-export-sample.ts
  * scripts/stance-spectrum-e2e.ts が作った testdata/stance-spectrum-state のキャッシュを再利用する
  * (LLM 呼び出しは全てキャッシュ済みのため API コストなし)。
@@ -105,8 +105,10 @@ async function main() {
     y: layout.y,
   });
   const json = JSON.stringify(sample);
-  writeFileSync("public/sample-phase2.json", json);
-  console.log(`public/sample-phase2.json に出力 (${(json.length / 1e6).toFixed(1)} MB, ${records.length} 意見)`);
+  writeFileSync("public/sample-stance-spectrum.json", json);
+  console.log(
+    `public/sample-stance-spectrum.json に出力 (${(json.length / 1e6).toFixed(1)} MB, ${records.length} 意見)`,
+  );
 }
 
 main().catch((e) => {

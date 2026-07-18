@@ -4,6 +4,7 @@ import { exportResultJson, parsePreprocessed, parseResultJson } from "../lib/exp
 import { navigate } from "../lib/router";
 import { dexieStepStore } from "../lib/storage/checkpoints";
 import { db, deleteProjectData, requestPersistentStorage } from "../lib/storage/db";
+import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
 import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
@@ -140,12 +141,12 @@ export function HomePage() {
         IndexedDB に保存されます — 大事なレポートは必ず JSON エクスポートで手元に保存してください。
       </p>
 
-      {projects && projects.filter((p) => p.status !== "done" && p.kind !== "phase2").length > 0 && (
+      {projects && projects.filter((p) => p.status !== "done" && p.kind !== PROJECT_KIND).length > 0 && (
         <>
           <h2>処理中のプロジェクト</h2>
           <div className="report-grid">
             {projects
-              .filter((p) => p.status !== "done" && p.kind !== "phase2")
+              .filter((p) => p.status !== "done" && p.kind !== PROJECT_KIND)
               .map((project) => (
                 <div key={project.id} className="card">
                   <h3>{project.title}</h3>

@@ -3,6 +3,7 @@ import { type CsvPreview, detectBodyColumn, normalizeComments, parseCsvFile } fr
 import { navigate } from "../lib/router";
 import { db, requestPersistentStorage } from "../lib/storage/db";
 import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overviewPrompt } from "../prompts";
+import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
 import { resolveEndpoint } from "../types/settings";
@@ -71,7 +72,7 @@ export function StanceSpectrumNewPage() {
       await requestPersistentStorage();
       const project: Project = {
         id: crypto.randomUUID(),
-        kind: "phase2",
+        kind: PROJECT_KIND,
         title: title || "無題の賛否スペクトラム分析",
         question,
         intro: "",

@@ -509,7 +509,7 @@ kouchou-ai-serverless/
      focus+context の stance 重み付けで「中立・保留 / 条件付き反対 / 明確な反対」の
      3群に分裂し純度55%へ(`scripts/stance-spectrum-e2e.ts`)。重み付けの注意: クラスタを明示選択した
      場合はトピックゲートを外す(選択自体がトピック条件。ゲートを残すと分裂力が不足する)。
-   - **事前分析済みサンプル**(`public/sample-phase2.json`, 1.1MB)を同梱し、
+   - **事前分析済みサンプル**(`public/sample-stance-spectrum.json`, 1.1MB)を同梱し、
      API キーなしで次世代版を体験可能(`#/stance-spectrum/sample`)。
    - **属性軸**: 数値属性(年齢等)は範囲正規化距離の「分離強度」スライダー、
      カテゴリカル属性(職業等)は色分けを既定とし、上位8カテゴリ+δ一致の分離も選択可

@@ -1,4 +1,11 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
+import {
+  LEGACY_PROJECT_KIND,
+  migrateNamespace,
+  migrateStep,
+  PROJECT_KIND,
+  projectNamespace,
+} from "../../stance-spectrum/storageKeys";
 import type { Project } from "../../types/project";
 import type { Result } from "../../types/result";
 
@@ -59,6 +66,60 @@ db.version(1).stores({
   reports: "id, createdAt",
 });
 
+// v2: 賛否スペクトラム分析の永続キーから "phase2" という開発順序由来の名前を除く。
+// スキーマ(インデックス)は変わらず、レコード内の値だけを移す。
+db.version(2)
+  .stores({})
+  .upgrade(async (tx) => {
+    // 旧データの kind は現行の ProjectKind には無い値なので、型は緩めて扱う
+    await tx
+      .table<{ kind?: string }>("projects")
+      .toCollection()
+      .modify((project) => {
+        if (project.kind === LEGACY_PROJECT_KIND) project.kind = PROJECT_KIND;
+      });
+
+    // namespace(projectId)と step は複合主キーの構成要素なので modify では変えられない。
+    // 新しいキーで put し直して旧行を消す。全件を一度にメモリへ載せると埋め込みベクトルで
+    // 数百 MB になりうるため、必ずバッチで回す。
+    // upgrade 全体が単一の versionchange トランザクションなので、途中で失敗すれば
+    // すべてロールバックされ、次回起動時に再試行される(中途半端な状態にはならない)。
+    const BATCH = 200;
+    // 各テーブルの主キー構成(db.version(1).stores と対応)
+    const tables: { name: string; primaryKey: (row: MigratableRow) => IDBValidKey }[] = [
+      { name: "stepResults", primaryKey: (row) => [row.projectId, row.step as string] },
+      { name: "extractionCache", primaryKey: (row) => [row.projectId, row.commentId as string] },
+      { name: "chunkCache", primaryKey: (row) => [row.projectId, row.step as string, row.key as string] },
+    ];
+
+    for (const { name, primaryKey } of tables) {
+      const store = tx.table<MigratableRow>(name);
+      for (;;) {
+        const rows = await store.filter(needsMigration).limit(BATCH).toArray();
+        if (rows.length === 0) break;
+
+        const oldKeys = rows.map(primaryKey);
+        const migrated = rows.map((row) => ({
+          ...row,
+          projectId: migrateNamespace(row.projectId) ?? row.projectId,
+          ...(typeof row.step === "string" ? { step: migrateStep(row.step) ?? row.step } : {}),
+        }));
+
+        // 先に消してから入れる。namespace だけが変わる行では新旧キーが異なるため
+        // 順序はどちらでもよいが、変換が恒等になった場合に自分自身を消さないようにする。
+        await store.bulkDelete(oldKeys);
+        await store.bulkPut(migrated);
+      }
+    }
+  });
+
+type MigratableRow = { projectId: string; step?: unknown; commentId?: unknown; key?: unknown };
+
+function needsMigration(row: MigratableRow): boolean {
+  if (migrateNamespace(row.projectId) !== null) return true;
+  return typeof row.step === "string" && migrateStep(row.step) !== null;
+}
+
 /** 初回プロジェクト作成時に永続ストレージを要求する(DESIGN §5.3) */
 export async function requestPersistentStorage(): Promise<boolean> {
   try {
@@ -85,14 +146,13 @@ export async function deleteProjectData(projectId: string): Promise<void> {
 
 /**
  * 賛否スペクトラム分析プロジェクトの削除。プロジェクト本体に加え、隔離した
- * "{projectId}-phase2" namespace の中間データ(phase2-extract / embedding /
- * codebook / phase2-edges / umap 等)もまとめて消す。
+ * "{projectId}-stance-spectrum" namespace の中間データ(抽出 / embedding /
+ * codebook / 候補辺 / umap 等)もまとめて消す。
  */
 export async function deleteStanceSpectrumProjectData(projectId: string): Promise<void> {
-  const phase2Id = `${projectId}-phase2`;
   await db.transaction("rw", db.projects, db.stepResults, db.extractionCache, db.chunkCache, async () => {
     await db.projects.delete(projectId);
-    for (const ns of [projectId, phase2Id]) {
+    for (const ns of [projectId, projectNamespace(projectId)]) {
       await db.stepResults.where("[projectId+step]").between([ns, ""], [ns, "￿"]).delete();
       await db.extractionCache.where("projectId").equals(ns).delete();
       await db.chunkCache.where("[projectId+step]").between([ns, ""], [ns, "￿"]).delete();

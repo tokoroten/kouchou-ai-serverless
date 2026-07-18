@@ -11,6 +11,7 @@ import {
 } from "../src/stance-spectrum/graph";
 import { summarizeCluster } from "../src/stance-spectrum/labelTemplate";
 import { sparseCosine, stanceSimilarity } from "../src/stance-spectrum/similarity";
+import { migrateNamespace, migrateStep } from "../src/stance-spectrum/storageKeys";
 import type { Codebook, OpinionRecord, StanceDistribution } from "../src/stance-spectrum/types";
 import { DEFAULT_VIEW, dominantStance, emptyStance, stanceScore } from "../src/stance-spectrum/types";
 
@@ -321,5 +322,32 @@ describe("clusterByLayout(見た目で切り直す)", () => {
     const y = new Float32Array([0, 0, 0]);
     const communities = clusterByLayout(x, y, 1.0);
     expect(Array.from(communities)).toEqual([0, 0, 0]);
+  });
+});
+
+describe("storageKeys: phase2 からの永続キー移行", () => {
+  it("実プロジェクトの namespace は接尾辞形で移行する", () => {
+    expect(migrateNamespace("abc-123-phase2")).toBe("abc-123-stance-spectrum");
+  });
+
+  it("同梱サンプルの namespace は接頭辞形で移行する", () => {
+    expect(migrateNamespace("phase2-sample")).toBe("stance-spectrum-sample");
+    expect(migrateNamespace("phase2-sample-survey")).toBe("stance-spectrum-sample-survey");
+  });
+
+  it("通常版や移行済みの namespace は触らない", () => {
+    expect(migrateNamespace("abc-123")).toBeNull();
+    expect(migrateNamespace("abc-123-stance-spectrum")).toBeNull();
+    expect(migrateNamespace("stance-spectrum-sample")).toBeNull();
+  });
+
+  it("賛否スペクトラム分析固有の step だけ移行する", () => {
+    expect(migrateStep("phase2-extract")).toBe("stance-spectrum-extract");
+    expect(migrateStep("phase2-label")).toBe("stance-spectrum-label");
+    // embedding / codebook / umap は通常版と共通なので変えない
+    expect(migrateStep("embedding")).toBeNull();
+    expect(migrateStep("codebook")).toBeNull();
+    expect(migrateStep("umap")).toBeNull();
+    expect(migrateStep("stance-spectrum-extract")).toBeNull();
   });
 });
