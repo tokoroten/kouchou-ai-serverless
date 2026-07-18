@@ -66,7 +66,8 @@ describe("resolveEndpoint: image スロット", () => {
     const endpoint = resolveEndpoint(settings, "image");
     expect(endpoint.baseUrl).toBe("https://api.openai.com/v1");
     expect(endpoint.apiKey).toBe("sk-test");
-    expect(endpoint.model).toBe("gpt-image-1");
+    // gpt-image-1 は 2026-10 廃止予定のため、既定は現行フラッグシップの 1.5
+    expect(endpoint.model).toBe("gpt-image-1.5");
   });
 
   it("明示したモデルが優先される", () => {

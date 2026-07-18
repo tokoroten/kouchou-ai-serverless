@@ -123,8 +123,17 @@ const MAX_TAKEAWAY_CHARS = 100;
 const MAX_QUESTION_CHARS = 200;
 const MAX_OVERVIEW_CHARS = 600;
 
+export type PptxImages = {
+  /** ポンチ絵(タイトルスライドに配置) */
+  ponchie?: Blob | null;
+  /** 散布図のキャプチャ(専用スライドに配置) */
+  chart?: Blob | null;
+};
+
 /** PowerPoint ファイルを生成してダウンロードする */
-export async function exportPptx(result: Result, ponchie: Blob | null): Promise<void> {
+export async function exportPptx(result: Result, images: PptxImages = {}): Promise<void> {
+  const ponchie = images.ponchie ?? null;
+  const chart = images.chart ?? null;
   // 動的インポート(バンドルサイズ削減のため必要時にのみ読み込む)
   const PptxGenJS = (await import("pptxgenjs")).default;
   const pptx = new PptxGenJS();
@@ -273,7 +282,26 @@ export async function exportPptx(result: Result, ponchie: Blob | null): Promise<
     }
   }
 
-  // ─── スライド 3〜N: クラスタ一覧(階層ごと) ─────────────────────────
+  // ─── スライド 3: 散布図 ──────────────────────────────────────────────
+  if (chart) {
+    const slide = pptx.addSlide();
+    slide.background = { color: COLOR_BG };
+    addHeading(slide, "意見の分布(散布図)");
+    const dataUrl = await blobToDataUrl(chart);
+    // 見出し(下端 1.1)の下いっぱいに contain で収める(キャプチャは 4:3)
+    const imgY = 1.25;
+    const imgH = PAGE_H - imgY - 0.2;
+    slide.addImage({
+      data: dataUrl,
+      x: MARGIN_X,
+      y: imgY,
+      w: CONTENT_W,
+      h: imgH,
+      sizing: { type: "contain", w: CONTENT_W, h: imgH },
+    });
+  }
+
+  // ─── スライド 4〜N: クラスタ一覧(階層ごと) ─────────────────────────
   for (const level of clusterLevels(clusters)) {
     const clustersAtLevel = clusters.filter((c) => c.level === level);
     const plan = planClusterPages(clustersAtLevel.length);

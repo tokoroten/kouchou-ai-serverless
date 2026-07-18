@@ -184,15 +184,16 @@ export const PRESETS: Preset[] = [
     baseUrl: "https://api.openai.com/v1",
     chatModel: "gpt-5.4-nano",
     embeddingModel: "text-embedding-3-small",
-    imageModel: "gpt-image-1",
+    imageModel: "gpt-image-1.5",
     corsNote: "そのまま動作します。意見分割・要約は nano / mini 級で十分です。",
     // dall-e-3 は API から廃止済み(2026-07 実測: The model 'dall-e-3' does not exist)。
-    // 現行の画像モデルは gpt-image 系のみ。
+    // 現行の画像モデルは gpt-image 系のみ。価格は 2026-07 時点の公表値。
+    // gpt-image-2 のみ 16 の倍数の任意サイズ(= 真の 4:3)に対応、他は固定サイズ。
     knownImageModels: [
-      { id: "gpt-image-1-mini", price: "gpt-image-1 より安価" },
-      { id: "gpt-image-1", price: "$0.011 - $0.167 / 枚(サイズと品質による)" },
-      { id: "gpt-image-1.5" },
-      { id: "gpt-image-2" },
+      { id: "gpt-image-1-mini", price: "$0.005 - $0.052 / 枚(サイズと品質による)" },
+      { id: "gpt-image-1.5", price: "$0.009 - $0.20 / 枚(サイズと品質による)" },
+      { id: "gpt-image-1", price: "$0.011 - $0.167 / 枚(2026-10 廃止予定)" },
+      { id: "gpt-image-2", price: "$0.006 - $0.21 / 枚(サイズと品質による)" },
     ],
     knownChatModels: [
       { id: "gpt-5-nano", price: "$0.05 / $0.40" },

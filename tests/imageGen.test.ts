@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildPonchiePrompt, generateImage } from "../src/lib/imageGen";
+import { buildPonchiePrompt, generateImage, pickFallbackSize } from "../src/lib/imageGen";
 import type { Cluster, Result } from "../src/types/result";
 import type { EndpointConfig } from "../src/types/settings";
 
@@ -190,6 +190,48 @@ describe("generateImage", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(generateImage({ ...endpoint, baseUrl: "" }, "prompt")).rejects.toThrow(/設定/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("既定サイズは 4:3(1280x960)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await generateImage(endpoint, "prompt");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).size).toBe("1280x960");
+  });
+
+  it("モデルが 4:3 非対応なら、エラー文面の対応一覧から横長を選んで再試行する", async () => {
+    // gpt-image-1 系の実際のエラー文面
+    const reject = new Response(
+      JSON.stringify({
+        error: { message: "Invalid size '1280x960'. Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto." },
+      }),
+      { status: 400 },
+    );
+    const ok = new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(reject).mockResolvedValueOnce(ok);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateImage(endpoint, "prompt");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 横長(1536x1024)が選ばれる。縦長や正方形ではない
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).size).toBe("1536x1024");
+  });
+
+  it("サイズと無関係な 400 はサイズ再試行しない", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: { message: "rate limit" } }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(generateImage(endpoint, "prompt")).rejects.toThrow(/rate limit/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pickFallbackSize: 横長 > 正方形 の優先で選ぶ", () => {
+    expect(pickFallbackSize("Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto.")).toBe("1536x1024");
+    expect(pickFallbackSize("Supported sizes are 1024x1024 and auto.")).toBe("1024x1024");
+    expect(pickFallbackSize("no sizes here")).toBeNull();
   });
 
   it("signal が fetch へ渡る(中断できる)", async () => {

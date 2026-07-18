@@ -24,7 +24,18 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   const [ponchieUrl, setPonchieUrl] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [ponchieError, setPonchieError] = useState<string | null>(null);
+  // クリックで最大化表示(ライトボックス)。Escape でも閉じる
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lightboxOpen]);
 
   // 保存済みポンチ絵の復元。cancelled ガードで、読み込み完了前に reportId が
   // 変わった/アンマウントされた場合の setState(別レポートの画像混入)を防ぐ。
@@ -84,9 +95,13 @@ export function ViewerPage({ reportId }: { reportId: string }) {
     setExportingPptx(true);
     setExportError(null);
     try {
+      // 表示中の散布図(Plotly)を 4:3 でキャプチャして散布図スライドに入れる。
+      // 階層リストタブなどでグラフが無いときは null になり、スライドはスキップされる
+      const { captureChartPng } = await import("../lib/chartImage");
+      const chart = await captureChartPng(document.querySelector(".viewer-chart")).catch(() => null);
       // pptxgenjs は重いので必要時にのみ読み込む
       const { exportPptx } = await import("../lib/pptx");
-      await exportPptx(report.result, ponchieBlob);
+      await exportPptx(report.result, { ponchie: ponchieBlob, chart });
     } catch (e) {
       setExportError(`PowerPoint エクスポートに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -195,7 +210,14 @@ export function ViewerPage({ reportId }: { reportId: string }) {
         {ponchieError && <div className="error-box">ポンチ絵の生成に失敗しました: {ponchieError}</div>}
         {imageRow && ponchieUrl && (
           <div style={{ marginTop: "0.75rem" }}>
-            <img src={ponchieUrl} alt="レポートの争点を表すポンチ絵" style={{ maxWidth: "100%", maxHeight: 480 }} />
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(true)}
+              title="クリックで拡大表示"
+              style={{ border: "none", padding: 0, background: "none", cursor: "zoom-in", display: "block" }}
+            >
+              <img src={ponchieUrl} alt="レポートの争点を表すポンチ絵" style={{ maxWidth: "100%", maxHeight: 480 }} />
+            </button>
             <p className="note">
               モデル: {imageRow.model} / 生成日時: {new Date(imageRow.createdAt).toLocaleString()}
             </p>
@@ -206,6 +228,33 @@ export function ViewerPage({ reportId }: { reportId: string }) {
           </div>
         )}
       </section>
+
+      {/* ライトボックス: クリックで最大化。背景クリックか Escape で閉じる */}
+      {lightboxOpen && ponchieUrl && (
+        <button
+          type="button"
+          aria-label="拡大表示を閉じる"
+          onClick={() => setLightboxOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0, 0, 0, 0.8)",
+            border: "none",
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "zoom-out",
+          }}
+        >
+          <img
+            src={ponchieUrl}
+            alt="レポートの争点を表すポンチ絵(拡大表示)"
+            style={{ maxWidth: "95vw", maxHeight: "95vh", objectFit: "contain" }}
+          />
+        </button>
+      )}
 
       <ReportViewer result={report.result} />
     </div>

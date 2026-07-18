@@ -55,10 +55,35 @@ export function buildPonchiePrompt(result: Result): string {
 }
 
 export type GenerateImageOptions = {
-  /** 生成サイズ。既定 1024x1024 */
+  /** 生成サイズ。既定 1280x960(4:3)。モデルが対応しない場合は対応サイズへ自動フォールバック */
   size?: string;
   signal?: AbortSignal;
 };
+
+/**
+ * 既定は 4:3 の横長(スライドや資料に貼る用途に合う)。
+ * gpt-image-2 は 16 の倍数の任意サイズに対応するのでそのまま通る。
+ * gpt-image-1 系は固定サイズ(1024x1024 / 1536x1024 / 1024x1536)しか受けないが、
+ * その場合はエラー文面の対応一覧から横長を選んで自動で再試行する。
+ */
+const DEFAULT_SIZE = "1280x960";
+
+/**
+ * サイズ拒否のエラー文面(例: "Supported sizes are 1024x1024, 1024x1536, 1536x1024, and auto.")
+ * から対応サイズを拾い、横長 > 正方形 の優先で代替を選ぶ。見つからなければ null。
+ */
+export function pickFallbackSize(errorText: string): string | null {
+  const sizes = errorText.match(/\d{3,5}x\d{3,5}/g);
+  if (!sizes || sizes.length === 0) return null;
+  const parsed = [...new Set(sizes)].map((s) => {
+    const [w, h] = s.split("x").map(Number);
+    return { s, w, h };
+  });
+  const landscape = parsed.filter((p) => p.w > p.h).sort((a, b) => b.w * b.h - a.w * a.h);
+  if (landscape.length > 0) return landscape[0].s;
+  const square = parsed.filter((p) => p.w === p.h).sort((a, b) => b.w - a.w);
+  return square[0]?.s ?? parsed[0].s;
+}
 
 /** images/generations で画像を生成し、PNG の Blob を返す */
 export async function generateImage(
@@ -83,13 +108,15 @@ export async function generateImage(
   // ため、まず送ってみて「response_format が原因の 400」なら外して1回だけ
   // 再試行する(自己修復)。応答が URL 形式でも取得できるようにしてある。
   let includeResponseFormat = !endpoint.model.startsWith("gpt-image");
+  let size = options.size ?? DEFAULT_SIZE;
+  let sizeRetried = false;
 
-  for (let attempt = 0; ; attempt++) {
+  for (;;) {
     const body: Record<string, unknown> = {
       model: endpoint.model,
       prompt,
       n: 1,
-      size: options.size ?? "1024x1024",
+      size,
       ...(includeResponseFormat ? { response_format: "b64_json" } : {}),
     };
 
@@ -97,9 +124,19 @@ export async function generateImage(
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      if (includeResponseFormat && res.status === 400 && text.includes("response_format") && attempt === 0) {
+      if (includeResponseFormat && res.status === 400 && text.includes("response_format")) {
         includeResponseFormat = false;
         continue;
+      }
+      // モデルが 4:3 に対応しない場合(gpt-image-1 系は固定サイズ)、
+      // エラー文面の対応一覧から横長を選んで1回だけ再試行する
+      if (!sizeRetried && res.status === 400 && text.includes("size")) {
+        const fallback = pickFallbackSize(text);
+        if (fallback && fallback !== size) {
+          size = fallback;
+          sizeRetried = true;
+          continue;
+        }
       }
       // API が返すエラー本文は原因が具体的に書かれていることが多いので、そのまま見せる
       throw new Error(`画像生成に失敗しました (HTTP ${res.status}): ${text.slice(0, 300)}`);
