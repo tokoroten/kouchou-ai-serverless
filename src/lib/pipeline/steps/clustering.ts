@@ -1,6 +1,6 @@
 import type { ClusteringResult, EmbeddingResult } from "../../../types/project";
-import { calculateRecommendedClusterNums } from "../clusterNums";
 import { type ClusteringInput, clusterXY, runClusteringCore } from "../clusteringCore";
+import { calculateRecommendedClusterNums } from "../clusterNums";
 import type { PipelineContext } from "../context";
 import { throwIfAborted } from "../context";
 

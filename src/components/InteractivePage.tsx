@@ -1,9 +1,9 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { exportPreprocessed } from "../lib/export";
-import { buildClusterTable } from "../lib/pipeline/clusterTable";
 import { clusterXY } from "../lib/pipeline/clusteringCore";
-import { type PipelineContext, memoryCheckpoints } from "../lib/pipeline/context";
+import { buildClusterTable } from "../lib/pipeline/clusterTable";
+import { memoryCheckpoints, type PipelineContext } from "../lib/pipeline/context";
 import { aggregation } from "../lib/pipeline/steps/aggregation";
 import { umapCheckpointKey } from "../lib/pipeline/steps/clustering";
 import { embedding as embeddingStep } from "../lib/pipeline/steps/embedding";
@@ -14,8 +14,8 @@ import { navigate } from "../lib/router";
 import { dexieCheckpoints, dexieStepStore } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
 import type { EmbeddingResult, ExtractionResult } from "../types/project";
-import { Plot } from "./viewer/Plot";
 import { SOFT_COLORS } from "./viewer/colors";
+import { Plot } from "./viewer/Plot";
 
 // リアルタイムモード(DESIGN §7.2 の前倒し・軽量版)。
 // - UMAP の収束過程を散布図上でライブ表示(Worker から中間座標を受信)

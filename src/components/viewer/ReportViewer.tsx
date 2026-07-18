@@ -2,9 +2,9 @@ import { useMemo, useState } from "react";
 import type { Cluster, Result } from "../../types/result";
 import {
   AttributeFilter,
+  computeAttributeMetas,
   EMPTY_FILTER,
   type FilterParams,
-  computeAttributeMetas,
   filterArgumentIds,
 } from "./AttributeFilter";
 import { HierarchyList } from "./HierarchyList";

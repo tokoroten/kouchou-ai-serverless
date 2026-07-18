@@ -49,7 +49,9 @@ export async function embedding(args: ExtractedArgument[], ctx: PipelineContext)
       }
       const batchDim = vectors[0]?.length ?? 0;
       flat = new Float32Array(vectors.length * batchDim);
-      vectors.forEach((v, i) => flat?.set(v, i * batchDim));
+      vectors.forEach((v, i) => {
+        flat?.set(v, i * batchDim);
+      });
       // バッチ単位で逐次保存(タブが閉じられても失われない)
       await ctx.checkpoints.putChunk("embedding", key, flat);
     }

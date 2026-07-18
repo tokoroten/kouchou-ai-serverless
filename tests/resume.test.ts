@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type PipelineContext, memoryCheckpoints } from "../src/lib/pipeline/context";
+import { memoryCheckpoints, type PipelineContext } from "../src/lib/pipeline/context";
 import { embedding } from "../src/lib/pipeline/steps/embedding";
 import { extraction } from "../src/lib/pipeline/steps/extraction";
 import type { CommentRow } from "../src/types/project";

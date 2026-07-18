@@ -1,4 +1,4 @@
-import { type EdgeSet, buildCandidateEdges } from "../graph";
+import { buildCandidateEdges, type EdgeSet } from "../graph";
 import type { OpinionRecord } from "../types";
 
 // 候補kNNグラフ構築 Worker。semantic kNN の総当たりが重いためメインスレッドから分離。

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildClusterTable } from "../src/lib/pipeline/clusterTable";
-import { type PipelineContext, memoryCheckpoints } from "../src/lib/pipeline/context";
-import { LABEL_ERROR_PLACEHOLDER, initialLabelling, mergeLabelling } from "../src/lib/pipeline/steps/labelling";
+import { memoryCheckpoints, type PipelineContext } from "../src/lib/pipeline/context";
+import { initialLabelling, LABEL_ERROR_PLACEHOLDER, mergeLabelling } from "../src/lib/pipeline/steps/labelling";
 import type { ClusteringResult, ExtractedArgument } from "../src/types/project";
 
 afterEach(() => {

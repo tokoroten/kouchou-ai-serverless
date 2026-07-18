@@ -1,5 +1,5 @@
 import type { ClusterLabel, LabellingResult } from "../../../types/project";
-import { Semaphore, requestChat } from "../../llm/client";
+import { requestChat, Semaphore } from "../../llm/client";
 import { parseLabelResponse } from "../../llm/jsonParse";
 import type { ClusterTable } from "../clusterTable";
 import { compositionHash, rowsInCluster, sampleRows, uniqueClusterIds } from "../clusterTable";

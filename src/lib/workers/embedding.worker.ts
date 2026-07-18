@@ -26,7 +26,9 @@ self.onmessage = async (event: MessageEvent<EmbeddingWorkerRequest>) => {
     });
     const dim = vectors[0]?.length ?? 0;
     const flat = new Float32Array(vectors.length * dim);
-    vectors.forEach((v, i) => flat.set(v, i * dim));
+    vectors.forEach((v, i) => {
+      flat.set(v, i * dim);
+    });
     self.postMessage({ type: "done", id, dim, flat } satisfies EmbeddingWorkerResponse, {
       transfer: [flat.buffer],
     });

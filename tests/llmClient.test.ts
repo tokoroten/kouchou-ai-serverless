@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Semaphore, requestChat } from "../src/lib/llm/client";
+import { requestChat, Semaphore } from "../src/lib/llm/client";
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -1,10 +1,10 @@
-import { Semaphore, requestChat } from "../lib/llm/client";
+import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseJsonObjectLoose } from "../lib/llm/jsonParse";
 import type { PipelineContext } from "../lib/pipeline/context";
 import { throwIfAborted } from "../lib/pipeline/context";
 import type { CommentRow, ExtractedArgument, Relation } from "../types/project";
 import { fallbackEnrichment, normalizeEnrichment } from "./enrich";
-import { EXTRACT_ENRICH_SCHEMA, buildExtractEnrichPrompt } from "./prompts";
+import { buildExtractEnrichPrompt, EXTRACT_ENRICH_SCHEMA } from "./prompts";
 import type { OpinionEnrichment } from "./types";
 
 // 賛否スペクトラム分析の投入口: 生コメントから「意見抽出 + 構造化属性付与(stance/topics/reasons 等)」を

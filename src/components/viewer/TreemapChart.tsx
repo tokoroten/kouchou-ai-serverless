@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { Argument, Cluster } from "../../types/result";
-import { Plot } from "./Plot";
 import { TREEMAP_COLORWAY } from "./colors";
+import { Plot } from "./Plot";
 
 // 本家 public-viewer TreemapChart の移植(簡略版)。
 // クラスタ階層 + 意見(リーフ)を treemap 表示し、クリックでズームする。

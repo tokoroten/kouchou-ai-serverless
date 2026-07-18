@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { listModels, listModelsDetailed, probeChat, requestEmbeddings } from "../lib/llm/client";
 import { prepareAndTestGeminiNano } from "../lib/llm/geminiNano";
 import { useSettings } from "../store/settings";
-import { PRESETS, type PresetId, isProviderConfigured, resolveEndpoint } from "../types/settings";
+import { isProviderConfigured, PRESETS, type PresetId, resolveEndpoint } from "../types/settings";
 
 // 設定画面(DESIGN §4)。
 // 1. プロバイダごとに API キー等を登録

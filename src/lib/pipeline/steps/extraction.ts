@@ -1,5 +1,5 @@
 import type { CommentRow, ExtractedArgument, ExtractionResult, Relation } from "../../../types/project";
-import { Semaphore, requestChat } from "../../llm/client";
+import { requestChat, Semaphore } from "../../llm/client";
 import { parseExtractionResponse } from "../../llm/jsonParse";
 import type { PipelineContext } from "../context";
 import { throwIfAborted } from "../context";

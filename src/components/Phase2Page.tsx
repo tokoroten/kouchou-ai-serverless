@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Semaphore, requestChat } from "../lib/llm/client";
+import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseLabelResponse } from "../lib/llm/jsonParse";
 import { fnv1a } from "../lib/pipeline/clusterTable";
 import type { PipelineContext } from "../lib/pipeline/context";
@@ -9,7 +9,7 @@ import { dexieCheckpoints } from "../lib/storage/checkpoints";
 import { db, deletePhase2ProjectData } from "../lib/storage/db";
 import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from "../phase2/attributes";
 import { type TrackedAssignment, trackClusters } from "../phase2/clusterTracker";
-import { type EdgeSet, computeEdgeWeights, cutWardToK, subsetEdges } from "../phase2/graph";
+import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../phase2/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../phase2/labelTemplate";
 import { buildEdgesWithWorker, preparePhase2Records } from "../phase2/prepare";
 import { deserializeSample, serializeSample } from "../phase2/sample";
@@ -18,9 +18,9 @@ import { DEFAULT_VIEW, dominantStance, stanceScore } from "../phase2/types";
 import { useSettings } from "../store/settings";
 import type { EmbeddingResult } from "../types/project";
 import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
+import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
-import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 
 // フェーズ2: 賛否スペクトラム分析(旧称: インタラクティブ再クラスタリング)。
 // - クラスタは固定分類ではなく、重み付けから都度生成される「ビュー」
@@ -136,6 +136,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
   }, [isSample, project, chatEndpoint, settings, checkpointsId]);
 
   // ---- サンプルモード: 事前分析済みデータを読み込むだけで動く ----
+  // biome-ignore lint/correctness/useExhaustiveDependencies: records ガードで初回のみ実行。startLayout 等を足すと再ロードを招くため意図的に除外
   useEffect(() => {
     if (!isSample || !sampleDef || records) return;
     (async () => {
@@ -155,7 +156,7 @@ export function Phase2Page({ projectId }: { projectId: string }) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [isSample, sampleDef, records]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isSample, sampleDef, records]);
 
   // ---- データ準備(結合抽出 → 埋め込み → codebook → 候補辺 → 初期座標) ----
   const prepare = async () => {
@@ -503,7 +504,9 @@ export function Phase2Page({ projectId }: { projectId: string }) {
     }
     [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .forEach(([clusterId], index) => map.set(clusterId, SOFT_COLORS[index % SOFT_COLORS.length]));
+      .forEach(([clusterId], index) => {
+        map.set(clusterId, SOFT_COLORS[index % SOFT_COLORS.length]);
+      });
     return map;
   }, [assignment]);
 

@@ -251,7 +251,9 @@ export function computeEdgeWeights(
 /** トピック絞り込み(ドリルダウン)用: 部分集合に含まれる辺だけを抜き出し、インデックスを振り直す */
 export function subsetEdges(edges: EdgeSet, indices: number[]): EdgeSet {
   const remap = new Map<number, number>();
-  indices.forEach((original, local) => remap.set(original, local));
+  indices.forEach((original, local) => {
+    remap.set(original, local);
+  });
   const keep: number[] = [];
   for (let e = 0; e < edges.count; e++) {
     if (remap.has(edges.source[e]) && remap.has(edges.target[e])) keep.push(e);

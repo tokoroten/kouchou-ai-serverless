@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { Argument, Cluster } from "../../types/result";
-import { Plot } from "./Plot";
 import { SOFT_COLORS, wrapHoverText, wrapLabelText } from "./colors";
+import { Plot } from "./Plot";
 
 // 本家 public-viewer ScatterChart の移植(簡略版)。
 // クラスタ色分け散布図 + クラスタ中心のラベル表示。

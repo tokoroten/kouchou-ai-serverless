@@ -1,11 +1,11 @@
-import { Semaphore, requestChat } from "../lib/llm/client";
+import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseJsonObjectLoose } from "../lib/llm/jsonParse";
 import type { Checkpoints, PipelineContext } from "../lib/pipeline/context";
 import { throwIfAborted } from "../lib/pipeline/context";
 import type { ExtractedArgument } from "../types/project";
 import { ENRICHMENT_SCHEMA, enrichmentPrompt } from "./prompts";
 import type { OpinionEnrichment, StanceDistribution, WeightedTag } from "./types";
-import { STANCE_KEYS, emptyStance } from "./types";
+import { emptyStance, STANCE_KEYS } from "./types";
 
 // フェーズ2の構造化抽出(enrichment)。
 // 通常版の抽出済み意見(argument)を入力に、stance 分布・topics・reasons 等を付与する。
