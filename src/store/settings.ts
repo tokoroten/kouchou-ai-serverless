@@ -68,11 +68,18 @@ export const useSettings = create<SettingsStore>()(
       migrate: (persisted) => {
         const saved = (persisted as { settings?: Partial<Settings> } | undefined)?.settings;
         if (!saved) return { settings: DEFAULT_SETTINGS };
+        // providers はプロバイダごとに中身を merge する。丸ごと差し替えると、
+        // 保存当時にまだ無かったフィールドが欠けたまま残る。
+        const providers = { ...DEFAULT_SETTINGS.providers } as Settings["providers"];
+        for (const [id, config] of Object.entries(saved.providers ?? {})) {
+          const key = id as keyof Settings["providers"];
+          providers[key] = { ...DEFAULT_SETTINGS.providers[key], ...config };
+        }
         return {
           settings: {
             ...DEFAULT_SETTINGS,
             ...saved,
-            providers: { ...DEFAULT_SETTINGS.providers, ...saved.providers },
+            providers,
             chatSlot: { ...DEFAULT_SETTINGS.chatSlot, ...saved.chatSlot },
             embeddingSlot: { ...DEFAULT_SETTINGS.embeddingSlot, ...saved.embeddingSlot },
           },

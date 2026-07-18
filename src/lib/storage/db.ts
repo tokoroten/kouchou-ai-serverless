@@ -80,34 +80,69 @@ db.version(2)
       });
 
     // namespace(projectId)と step は複合主キーの構成要素なので modify では変えられない。
-    // 新しいキーで put し直して旧行を消す。全件を一度にメモリへ載せると埋め込みベクトルで
-    // 数百 MB になりうるため、必ずバッチで回す。
-    // upgrade 全体が単一の versionchange トランザクションなので、途中で失敗すれば
-    // すべてロールバックされ、次回起動時に再試行される(中途半端な状態にはならない)。
+    // 新しいキーで put し直して旧行を消す。
+    //
+    // 移行対象かどうかは projectId と step だけで決まり、どちらも主キーに含まれる。
+    // そこで primaryKeys() でキーだけを走査して対象を確定し、値の読み込みは実際に
+    // 移行する行に限る。Collection.filter() は値カーソルなので全行を構造化複製で
+    // 読み出してしまい、しかも移行済みの行は同じストアに残るため、バッチのたびに
+    // 先頭から読み直すことになる(埋め込みベクトルを含む数万行で二次的に効く)。
+    //
+    // 対象を先に一度だけ確定させるので、1行が二度変換されることもない。
     const BATCH = 200;
-    // 各テーブルの主キー構成(db.version(1).stores と対応)
-    const tables: { name: string; primaryKey: (row: MigratableRow) => IDBValidKey }[] = [
-      { name: "stepResults", primaryKey: (row) => [row.projectId, row.step as string] },
-      { name: "extractionCache", primaryKey: (row) => [row.projectId, row.commentId as string] },
-      { name: "chunkCache", primaryKey: (row) => [row.projectId, row.step as string, row.key as string] },
+    // 各テーブルの主キー構成(db.version(1).stores と対応)。
+    // projectId は常に先頭、step は stepResults / chunkCache の2番目。
+    const tables: { name: string; stepIndex: number | null }[] = [
+      { name: "stepResults", stepIndex: 1 },
+      { name: "extractionCache", stepIndex: null },
+      { name: "chunkCache", stepIndex: 1 },
     ];
 
-    for (const { name, primaryKey } of tables) {
+    for (const { name, stepIndex } of tables) {
       const store = tx.table<MigratableRow>(name);
-      for (;;) {
-        const rows = await store.filter(needsMigration).limit(BATCH).toArray();
-        if (rows.length === 0) break;
+      const allKeys = (await store.toCollection().primaryKeys()) as string[][];
+      const migrateKey = (key: string[]): string[] | null => {
+        const nextNamespace = migrateNamespace(key[0]);
+        const nextStep = stepIndex !== null ? migrateStep(key[stepIndex]) : null;
+        if (nextNamespace === null && nextStep === null) return null;
+        const next = [...key];
+        if (nextNamespace !== null) next[0] = nextNamespace;
+        if (nextStep !== null && stepIndex !== null) next[stepIndex] = nextStep;
+        return next;
+      };
+      const targets = allKeys.filter((key) => migrateKey(key) !== null);
 
-        const oldKeys = rows.map(primaryKey);
-        const migrated = rows.map((row) => ({
-          ...row,
-          projectId: migrateNamespace(row.projectId) ?? row.projectId,
-          ...(typeof row.step === "string" ? { step: migrateStep(row.step) ?? row.step } : {}),
-        }));
+      // 移行先のキーが既存の行とぶつかっていないか確かめる。ぶつかったまま bulkPut
+      // すると相手を黙って上書きしてしまい、取り返しがつかない。現行の ID 体系
+      // (crypto.randomUUID は16進数のみ)では起こらないはずだが、失うものが
+      // LLM 課金済みの中間データなので確認してから進む。
+      // キー要素自体が区切り文字を含みうるので、曖昧さのない JSON 表現で突き合わせる
+      const asText = (key: string[]) => JSON.stringify(key);
+      const staying = new Set(allKeys.filter((key) => migrateKey(key) === null).map(asText));
+      const seen = new Set<string>();
+      for (const key of targets) {
+        const next = asText(migrateKey(key) as string[]);
+        if (staying.has(next) || seen.has(next)) {
+          throw new Error(`マイグレーション先のキーが衝突しました (${name}): ${next}`);
+        }
+        seen.add(next);
+      }
 
-        // 先に消してから入れる。namespace だけが変わる行では新旧キーが異なるため
-        // 順序はどちらでもよいが、変換が恒等になった場合に自分自身を消さないようにする。
-        await store.bulkDelete(oldKeys);
+      for (let offset = 0; offset < targets.length; offset += BATCH) {
+        const batch = targets.slice(offset, offset + BATCH);
+        const rows = await store.bulkGet(batch);
+        const migrated: MigratableRow[] = [];
+        for (const row of rows) {
+          // 直前に列挙したキーなので通常あり得ないが、取れなければ黙って捨てずに落とす
+          if (!row) throw new Error("マイグレーション中にレコードを読み出せませんでした");
+          migrated.push({
+            ...row,
+            projectId: migrateNamespace(row.projectId) ?? row.projectId,
+            ...(typeof row.step === "string" ? { step: migrateStep(row.step) ?? row.step } : {}),
+          });
+        }
+
+        await store.bulkDelete(batch);
         await store.bulkPut(migrated);
       }
     }
@@ -115,10 +150,12 @@ db.version(2)
 
 type MigratableRow = { projectId: string; step?: unknown; commentId?: unknown; key?: unknown };
 
-function needsMigration(row: MigratableRow): boolean {
-  if (migrateNamespace(row.projectId) !== null) return true;
-  return typeof row.step === "string" && migrateStep(row.step) !== null;
-}
+// 別タブが古いバージョンで DB を開いていると versionchange を取れず、Dexie は
+// 無言で待ち続ける(画面が「読み込み中...」のまま理由も出ない)。理由を伝える。
+db.on("blocked", () => {
+  console.warn("他のタブがこのアプリを開いているため、データベースの更新を待っています。");
+  alert("データの更新のため、このアプリを開いている他のタブを閉じてから再読み込みしてください。");
+});
 
 /** 初回プロジェクト作成時に永続ストレージを要求する(DESIGN §5.3) */
 export async function requestPersistentStorage(): Promise<boolean> {
