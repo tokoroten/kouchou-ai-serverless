@@ -1,4 +1,4 @@
-import Delaunator from "delaunator";
+﻿import Delaunator from "delaunator";
 import seedrandom from "seedrandom";
 import { UMAP } from "umap-js";
 
@@ -39,6 +39,19 @@ export type LayoutWorkerResponse =
 const KNN_K = 15;
 const TICK_MS = 33; // ~30fps
 const STEPS_PER_TICK = 3;
+
+// 焼きなましの強さ。umap-js の学習率は alpha = learningRate * (1 - epoch/nEpochs) で減衰する。
+//
+// COLD: 初回のレイアウト。初期座標は「素の埋め込み距離」の UMAP 結果で、ここから
+//   「結合特徴距離」の空間へ移す必要があるため、通常どおり全力で焼きなます。
+// WARM: スライダー操作など、既にこの空間でレイアウト済みの状態からの再計算。
+//   ここで COLD と同じ設定で回すと、ウォームスタートで渡した現在座標が最適化に
+//   完全に上書きされ、連続的な遷移にならない(開始配置の保持率がほぼ 0 になる)。
+//   学習率を落として短く回すことで、現在の配置を保ったまま重みの変化分だけ動かす。
+const COLD_ANNEAL = { nEpochs: 500, learningRate: 1.0 };
+const WARM_ANNEAL = { nEpochs: 100, learningRate: 0.2 };
+// init 直後は COLD、一度レイアウトを組んだ後は WARM を使う
+let hasLaidOut = false;
 
 let coordsX: Float32Array = new Float32Array(0);
 let coordsY: Float32Array = new Float32Array(0);
@@ -255,12 +268,17 @@ function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float
     knnDistances[i] = distances;
   }
 
+  // 辺の重みが変わると kNN が変わるためインスタンスは作り直すしかないが、
+  // 2回目以降は弱く短く焼きなますことでウォームスタートの効果を残す
+  const anneal = hasLaidOut ? WARM_ANNEAL : COLD_ANNEAL;
   const rng = seedrandom("phase2-layout");
   const instance = new UMAP({
     nComponents: 2,
     nNeighbors: KNN_K,
     minDist: 0.15,
     spread: 1.5,
+    nEpochs: anneal.nEpochs,
+    learningRate: anneal.learningRate,
     random: () => rng(),
   });
   instance.setPrecomputedKNN(knnIndices, knnDistances);
@@ -276,6 +294,7 @@ function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float
     embedding[i][1] = coordsY[i];
   }
   umap = internals;
+  hasLaidOut = true;
   if (!timer) timer = setInterval(tick, TICK_MS);
 }
 
@@ -337,6 +356,8 @@ self.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
       coordsY = message.y.slice();
       umap = null;
       linkagePosted = false;
+      // 新しいデータ/スコープなので、次の edges は COLD で焼き直す
+      hasLaidOut = false;
       // 初期レイアウトの RMS 半径を表示スケールの基準にする
       const n = coordsX.length;
       if (n > 0) {
