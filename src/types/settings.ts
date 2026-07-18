@@ -186,9 +186,13 @@ export const PRESETS: Preset[] = [
     embeddingModel: "text-embedding-3-small",
     imageModel: "gpt-image-1",
     corsNote: "そのまま動作します。意見分割・要約は nano / mini 級で十分です。",
+    // dall-e-3 は API から廃止済み(2026-07 実測: The model 'dall-e-3' does not exist)。
+    // 現行の画像モデルは gpt-image 系のみ。
     knownImageModels: [
+      { id: "gpt-image-1-mini", price: "gpt-image-1 より安価" },
       { id: "gpt-image-1", price: "$0.011 - $0.167 / 枚(サイズと品質による)" },
-      { id: "dall-e-3", price: "$0.040 / 枚(1024x1024・standard)" },
+      { id: "gpt-image-1.5" },
+      { id: "gpt-image-2" },
     ],
     knownChatModels: [
       { id: "gpt-5-nano", price: "$0.05 / $0.40" },

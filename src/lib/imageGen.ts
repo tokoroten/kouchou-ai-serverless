@@ -69,17 +69,6 @@ export async function generateImage(
   if (!endpoint.baseUrl) throw new Error("画像生成プロバイダが設定されていません。設定画面で選択してください。");
   const url = `${endpoint.baseUrl.replace(/\/$/, "")}/images/generations`;
 
-  // gpt-image-1 は常に base64 を返し、response_format を送るとエラーになる。
-  // dall-e-3 は既定が URL なので明示的に b64_json を要求する。
-  const isGptImage = endpoint.model.startsWith("gpt-image");
-  const body: Record<string, unknown> = {
-    model: endpoint.model,
-    prompt,
-    n: 1,
-    size: options.size ?? "1024x1024",
-    ...(isGptImage ? {} : { response_format: "b64_json" }),
-  };
-
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (endpoint.apiKey) {
     if (endpoint.authHeader === "api-key") headers["api-key"] = endpoint.apiKey;
@@ -87,22 +76,56 @@ export async function generateImage(
   }
   if (endpoint.extraHeaders) Object.assign(headers, endpoint.extraHeaders);
 
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: options.signal });
+  // response_format の要否はモデルと API の世代で異なる:
+  // gpt-image 系は常に base64 を返しパラメータ自体を拒否、旧 dall-e-3 は既定が
+  // URL なので b64_json の明示が必要だった。現行 API では dall-e-3 でも拒否される
+  // ことを実環境で確認済み。モデル名で出し分けるのは API が変わるたびに壊れる
+  // ため、まず送ってみて「response_format が原因の 400」なら外して1回だけ
+  // 再試行する(自己修復)。応答が URL 形式でも取得できるようにしてある。
+  let includeResponseFormat = !endpoint.model.startsWith("gpt-image");
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    // API が返すエラー本文は原因が具体的に書かれていることが多いので、そのまま見せる
-    throw new Error(`画像生成に失敗しました (HTTP ${res.status}): ${text.slice(0, 300)}`);
+  for (let attempt = 0; ; attempt++) {
+    const body: Record<string, unknown> = {
+      model: endpoint.model,
+      prompt,
+      n: 1,
+      size: options.size ?? "1024x1024",
+      ...(includeResponseFormat ? { response_format: "b64_json" } : {}),
+    };
+
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: options.signal });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      if (includeResponseFormat && res.status === 400 && text.includes("response_format") && attempt === 0) {
+        includeResponseFormat = false;
+        continue;
+      }
+      // API が返すエラー本文は原因が具体的に書かれていることが多いので、そのまま見せる
+      throw new Error(`画像生成に失敗しました (HTTP ${res.status}): ${text.slice(0, 300)}`);
+    }
+
+    const data = (await res.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
+    const item = data.data?.[0];
+
+    if (item?.b64_json) {
+      const binary = atob(item.b64_json);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: "image/png" });
+    }
+
+    // b64 を要求できなかった(または無視された)場合、URL で返るモデルがある
+    if (item?.url) {
+      const imageRes = await fetch(item.url, { signal: options.signal });
+      if (!imageRes.ok) {
+        throw new Error(`生成された画像のダウンロードに失敗しました (HTTP ${imageRes.status})`);
+      }
+      return await imageRes.blob();
+    }
+
+    throw new Error("画像生成の応答に画像データ (b64_json / url) が含まれていません。");
   }
-
-  const data = (await res.json()) as { data?: Array<{ b64_json?: string }> };
-  const b64 = data.data?.[0]?.b64_json;
-  if (!b64) throw new Error("画像生成の応答に画像データ (b64_json) が含まれていません。");
-
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: "image/png" });
 }
 
 /** 生成して保存するところまで一括で行う */

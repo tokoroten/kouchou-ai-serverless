@@ -103,13 +103,62 @@ describe("generateImage", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty("response_format");
   });
 
-  it("dall-e-3 には b64_json を明示する(既定が URL のため)", async () => {
+  it("dall-e-3 には初回 b64_json を明示する(旧 API の既定が URL のため)", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await generateImage({ ...endpoint, model: "dall-e-3" }, "prompt");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).response_format).toBe("b64_json");
+  });
+
+  it("response_format が原因の 400 なら、外して1回だけ再試行する(現行 API はパラメータ自体を拒否)", async () => {
+    const reject = new Response(
+      JSON.stringify({ error: { message: "Unknown parameter: 'response_format'.", param: "response_format" } }),
+      { status: 400 },
+    );
+    const ok = new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(reject).mockResolvedValueOnce(ok);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await generateImage({ ...endpoint, model: "dall-e-3" }, "prompt");
+    expect(blob.type).toBe("image/png");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toHaveProperty("response_format");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty("response_format");
+  });
+
+  it("再試行は1回まで(2回目も response_format 起因の 400 ならそのままエラー)", async () => {
+    const reject = () =>
+      new Response(JSON.stringify({ error: { message: "Unknown parameter: 'response_format'." } }), { status: 400 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(reject()).mockResolvedValueOnce(reject());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(generateImage({ ...endpoint, model: "dall-e-3" }, "prompt")).rejects.toThrow(/400/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("response_format と無関係な 400 は再試行しない", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: { message: "billing_hard_limit" } }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(generateImage({ ...endpoint, model: "dall-e-3" }, "prompt")).rejects.toThrow(/billing/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("応答が URL 形式なら画像をダウンロードして Blob にする", async () => {
+    const pngBytes = Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ url: "https://images.example/generated.png" }] }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(pngBytes, { status: 200, headers: { "Content-Type": "image/png" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await generateImage(endpoint, "prompt");
+    expect(blob.size).toBe(pngBytes.length);
+    expect(fetchMock.mock.calls[1][0]).toBe("https://images.example/generated.png");
   });
 
   it("api-key 方式(Azure)のヘッダを使う", async () => {
