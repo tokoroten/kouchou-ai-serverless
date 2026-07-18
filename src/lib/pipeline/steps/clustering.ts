@@ -1,5 +1,5 @@
 import type { ClusteringResult, EmbeddingResult } from "../../../types/project";
-import { type ClusteringInput, clusterXY, runClusteringCore } from "../clusteringCore";
+import { type ClusteringInput, clusterXY, runClusteringCore, type UmapParams } from "../clusteringCore";
 import { calculateRecommendedClusterNums } from "../clusterNums";
 import type { PipelineContext } from "../context";
 import { throwIfAborted } from "../context";
@@ -13,11 +13,19 @@ export type ClusteringProgressExtra = {
   onCoords?: (x: Float32Array, y: Float32Array) => void;
 };
 
+export type ClusteringOptions = {
+  /** UMAP 詳細パラメータ。既定値と異なるキーのみ渡す(キャッシュキーを安定させるため) */
+  umap?: UmapParams;
+  /** 乱数シード。省略時は "kouchou-ai" */
+  seed?: string;
+};
+
 export async function clustering(
   embeddingResult: EmbeddingResult,
   clusterNums: number[],
   ctx: PipelineContext,
   extra: ClusteringProgressExtra = {},
+  options: ClusteringOptions = {},
 ): Promise<ClusteringResult> {
   throwIfAborted(ctx.signal);
   const count = embeddingResult.argIds.length;
@@ -25,15 +33,19 @@ export async function clustering(
   // 払った後に落とさないよう件数でクランプする
   const requested = clusterNums.length > 0 ? clusterNums : calculateRecommendedClusterNums(count);
   const nums = [...new Set(requested.map((n) => Math.max(2, Math.min(n, count))))].sort((a, b) => a - b);
+  const umap = options.umap && Object.keys(options.umap).length > 0 ? options.umap : undefined;
   const input: ClusteringInput = {
     vectors: embeddingResult.vectors,
     dim: embeddingResult.dim,
     count,
     clusterNums: nums,
-    seed: "kouchou-ai",
+    seed: options.seed || "kouchou-ai",
+    ...(umap ? { umap } : {}),
   };
 
-  const cached = await ctx.checkpoints.getChunk("clustering", JSON.stringify(nums));
+  // clustering キャッシュも UMAP パラメータ込みで引く。既定パラメータのときは
+  // 接尾辞が付かないため、既存プロジェクトのキャッシュをそのまま再利用できる。
+  const cached = await ctx.checkpoints.getChunk("clustering", clusteringCheckpointKey(nums, input));
   if (cached) return cached as ClusteringResult;
 
   // UMAP 座標のチェックポイント(タブが閉じられても UMAP を再計算しない。
@@ -59,8 +71,19 @@ export async function clustering(
     clusterNums: output.clusterNums,
     assignments: output.assignments,
   };
-  await ctx.checkpoints.putChunk("clustering", JSON.stringify(nums), result);
+  await ctx.checkpoints.putChunk("clustering", clusteringCheckpointKey(nums, input), result);
   return result;
+}
+
+/**
+ * clustering ステップのキャッシュキー。既定シード・既定 UMAP パラメータのときは
+ * 従来どおりクラスタ数のみ(既存キャッシュ互換)、変更時のみ接尾辞が付く。
+ */
+function clusteringCheckpointKey(nums: number[], input: Pick<ClusteringInput, "seed" | "umap">): string {
+  const seed = input.seed ?? "kouchou-ai";
+  const seedPart = seed === "kouchou-ai" ? "" : `/${seed}`;
+  const umapPart = input.umap && Object.keys(input.umap).length > 0 ? `/${JSON.stringify(input.umap)}` : "";
+  return `${JSON.stringify(nums)}${seedPart}${umapPart}`;
 }
 
 type CoreOutput = {

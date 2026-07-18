@@ -1,6 +1,7 @@
 import Delaunator from "delaunator";
 import seedrandom from "seedrandom";
 import { UMAP } from "umap-js";
+import { LAYOUT_UMAP_DEFAULTS, type LayoutUmapParams } from "../layoutParams";
 
 // 表示用レイアウト Worker: 本物の UMAP を「結合特徴の距離 + ウォームスタート」で回す。
 //
@@ -27,6 +28,7 @@ export type LayoutWorkerRequest =
   | { type: "init"; x: Float32Array; y: Float32Array }
   | { type: "edges"; source: Int32Array; target: Int32Array; weights: Float32Array; threshold: number }
   | { type: "stanceAxis"; enabled: boolean; scores: Float32Array | null; lambda: number }
+  | { type: "umapParams"; params: LayoutUmapParams; recold: boolean }
   | { type: "computeLinkage" }
   | { type: "stop" };
 
@@ -36,7 +38,11 @@ export type LayoutWorkerResponse =
   // 併合列(コスト昇順の (rootA, rootB) ペア)を返す。main 側で K 本カットする。
   | { type: "linkage"; a: Int32Array; b: Int32Array; n: number };
 
-const KNN_K = 15;
+// 現在有効なパラメータ(メインスレッドから "umapParams" で差し替え可能)
+let layoutParams: LayoutUmapParams = { ...LAYOUT_UMAP_DEFAULTS };
+// 直近の候補辺。パラメータ変更時に再構築へ流し直すため保持する
+let lastEdges: { source: Int32Array; target: Int32Array; weights: Float32Array; threshold: number } | null = null;
+
 const TICK_MS = 33; // ~30fps
 const STEPS_PER_TICK = 3;
 
@@ -228,7 +234,10 @@ function postLinkage(): void {
 function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float32Array, threshold: number): void {
   const n = coordsX.length;
   if (n === 0) return;
+  lastEdges = { source, target, weights, threshold };
   linkagePosted = false; // 再加熱するので収束時に新しい連結列を送り直す
+  // kNN 本数は点数を超えられない(UMAP は矩形 kNN 配列を要求する)
+  const knnK = Math.max(2, Math.min(layoutParams.nNeighbors, n));
 
   // 隣接リスト(しきい値以下の辺は使わない)
   const neighbors: { j: number; d: number }[][] = Array.from({ length: n }, () => []);
@@ -265,11 +274,11 @@ function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float
     neighbors[i].sort((a, b) => a.d - b.d);
     const indices = [i];
     const distances = [0];
-    for (let k = 0; k < Math.min(KNN_K - 1, neighbors[i].length); k++) {
+    for (let k = 0; k < Math.min(knnK - 1, neighbors[i].length); k++) {
       indices.push(neighbors[i][k].j);
       distances.push(neighbors[i][k].d);
     }
-    while (indices.length < KNN_K) {
+    while (indices.length < knnK) {
       indices.push(i);
       distances.push(0);
     }
@@ -280,13 +289,17 @@ function rebuildOptimizer(source: Int32Array, target: Int32Array, weights: Float
   // 辺の重みが変わると kNN が変わるためインスタンスは作り直すしかないが、
   // 2回目以降は弱く短く焼きなますことでウォームスタートの効果を残す
   const anneal = hasLaidOut ? WARM_ANNEAL : COLD_ANNEAL;
-  const rng = seedrandom("phase2-layout");
+  // epochs を明示指定した場合は COLD(初回の焼き直し)のみ上書きする。
+  // WARM は「現在の配置を保ったまま重みの変化分だけ動かす」ためのもので、
+  // ここを長くするとスライダー操作のたびに配置が飛ぶ。
+  const epochs = layoutParams.nEpochs > 0 && !hasLaidOut ? layoutParams.nEpochs : anneal.nEpochs;
+  const rng = seedrandom(layoutParams.seed || LAYOUT_UMAP_DEFAULTS.seed);
   const instance = new UMAP({
     nComponents: 2,
-    nNeighbors: KNN_K,
-    minDist: 0.15,
-    spread: 1.5,
-    nEpochs: anneal.nEpochs,
+    nNeighbors: knnK,
+    minDist: layoutParams.minDist,
+    spread: layoutParams.spread,
+    nEpochs: epochs,
     learningRate: anneal.learningRate,
     random: () => rng(),
   });
@@ -365,6 +378,7 @@ self.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
       coordsY = message.y.slice();
       umap = null;
       linkagePosted = false;
+      lastEdges = null;
       // 新しいデータ/スコープなので、次の edges は COLD で焼き直す
       hasLaidOut = false;
       // 初期レイアウトの RMS 半径を表示スケールの基準にする
@@ -401,6 +415,16 @@ self.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
         linkagePosted = false;
       }
       break;
+    case "umapParams": {
+      layoutParams = { ...message.params };
+      // recold=true なら初回同様に全力で焼き直す(seed 変更で別レイアウトを得る用途)。
+      // false ならウォームスタートのまま、現在の配置から新パラメータへ移す。
+      if (message.recold) hasLaidOut = false;
+      if (lastEdges) {
+        rebuildOptimizer(lastEdges.source, lastEdges.target, lastEdges.weights, lastEdges.threshold);
+      }
+      break;
+    }
     case "computeLinkage":
       // 手動要求: 現在の座標から即 連結列を送る(linkagePosted は立てない ⇒ 収束時に最終版を再送)
       postLinkage();

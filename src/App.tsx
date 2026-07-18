@@ -35,7 +35,11 @@ export function App() {
   } else if (route.startsWith("/run/")) {
     page = <RunPage projectId={route.slice("/run/".length)} />;
   } else if (route.startsWith("/report/")) {
-    page = <ViewerPage reportId={route.slice("/report/".length)} />;
+    // key でレポートごとに別インスタンスにする(StanceSpectrumPage と同じ理由)。
+    // これが無いと、レポート A のポンチ絵生成中に B へ直接移動したとき、
+    // 生成完了後の setState が同一インスタンスに届き、B の画面に A の画像が出る。
+    const viewerReportId = route.slice("/report/".length);
+    page = <ViewerPage key={viewerReportId} reportId={viewerReportId} />;
   } else if (route.startsWith("/interactive/")) {
     page = <InteractivePage projectId={route.slice("/interactive/".length)} />;
   } else if (route === "/stance-spectrum") {

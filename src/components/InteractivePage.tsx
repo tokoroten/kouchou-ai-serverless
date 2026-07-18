@@ -14,8 +14,15 @@ import { navigate } from "../lib/router";
 import { dexieCheckpoints, dexieStepStore } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
 import type { EmbeddingResult, ExtractionResult } from "../types/project";
+import {
+  toUmapInput as toUmapInputShared,
+  UMAP_UI_DEFAULTS,
+  UmapParamsPanel,
+  type UmapUiParams,
+} from "./UmapParamsPanel";
 import { SOFT_COLORS } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
+import { convexHull } from "./viewer/ScatterChart";
 
 // リアルタイムモード(DESIGN §7.2 の前倒し・軽量版)。
 // - UMAP の収束過程を散布図上でライブ表示(Worker から中間座標を受信)
@@ -43,14 +50,11 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const [assignments, setAssignments] = useState<Int32Array[] | null>(null);
   const [labelsPreview, setLabelsPreview] = useState<{ id: string; label: string; value: number }[] | null>(null);
   const [labelling, setLabelling] = useState(false);
+  // 階層の見せ方: 第1階層 = 凸包(なわばり)、第2階層 = 点の色。
+  // 粗い括りと細かい括りを1枚の散布図で同時に読めるようにする。
+  const [showHull, setShowHull] = useState(true);
   // UMAP 詳細パラメータ(変更後は「UMAP 再実行」で反映)
-  const [umapParams, setUmapParams] = useState({
-    nNeighbors: 15,
-    minDist: 0.1,
-    spread: 1.0,
-    nEpochs: 0, // 0 = 自動
-    seed: "kouchou-ai",
-  });
+  const [umapParams, setUmapParams] = useState<UmapUiParams>(UMAP_UI_DEFAULTS);
   // 現在表示中の座標がどのパラメータで計算されたか(変更検知用)
   const [appliedParams, setAppliedParams] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -58,18 +62,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   // このページで消費したトークン(ラベリング・前処理)。レポート保存時に記録する
   const usageRef = useRef({ input: 0, output: 0, total: 0 });
 
-  const toUmapInput = useCallback(
-    () => ({
-      seed: umapParams.seed || "kouchou-ai",
-      umap: {
-        ...(umapParams.nNeighbors !== 15 ? { nNeighbors: umapParams.nNeighbors } : {}),
-        ...(umapParams.minDist !== 0.1 ? { minDist: umapParams.minDist } : {}),
-        ...(umapParams.spread !== 1.0 ? { spread: umapParams.spread } : {}),
-        ...(umapParams.nEpochs > 0 ? { nEpochs: umapParams.nEpochs } : {}),
-      },
-    }),
-    [umapParams],
-  );
+  const toUmapInput = useCallback(() => toUmapInputShared(umapParams), [umapParams]);
   const paramsDirty = appliedParams !== null && appliedParams !== JSON.stringify(toUmapInput());
   // 表示中の座標を計算したときのシード(KMeans/ward の再計算にも同じ値を使う)
   const appliedSeed = (() => {
@@ -291,7 +284,43 @@ export function InteractivePage({ projectId }: { projectId: string }) {
           (label) => SOFT_COLORS[((label % SOFT_COLORS.length) + SOFT_COLORS.length) % SOFT_COLORS.length],
         )
       : "#3fa9f5";
+
+    // 第1階層の凸包(なわばり)。SVG scatter は WebGL(scattergl)の前面に描かれるため、
+    // 塗りは薄くして点を隠さないようにする(賛否スペクトラム側と同じ方式)。
+    // biome-ignore lint/suspicious/noExplicitAny: Plotly trace
+    const hullTraces: any[] = [];
+    if (showHull && assignments && assignments.length > 0) {
+      const labels = assignments[0];
+      const groups = new Map<number, [number, number][]>();
+      for (let i = 0; i < labels.length; i++) {
+        const point: [number, number] = [coords.x[i], coords.y[i]];
+        const group = groups.get(labels[i]);
+        if (group) group.push(point);
+        else groups.set(labels[i], [point]);
+      }
+      for (const [label, points] of groups) {
+        const hull = convexHull(points);
+        if (hull.length < 3) continue; // 2点以下は面にならない
+        const color = SOFT_COLORS[((label % SOFT_COLORS.length) + SOFT_COLORS.length) % SOFT_COLORS.length];
+        hullTraces.push({
+          x: [...hull.map((p) => p[0]), hull[0][0]],
+          y: [...hull.map((p) => p[1]), hull[0][1]],
+          mode: "lines",
+          type: "scatter",
+          fill: "toself",
+          fillcolor: `${color}1a`,
+          line: { color, width: 1.5 },
+          hoveron: "fills",
+          hoverinfo: "text",
+          text: `第1階層 クラスタ ${label}(${points.length} 件)`,
+          hoverlabel: { bgcolor: color, bordercolor: color, font: { color: "white", size: 13 } },
+          showlegend: false,
+        });
+      }
+    }
+
     return [
+      ...hullTraces,
       {
         x: Array.from(coords.x),
         y: Array.from(coords.y),
@@ -302,7 +331,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
         showlegend: false,
       },
     ];
-  }, [coords, assignments]);
+  }, [coords, assignments, showHull]);
 
   const plotLayout = useMemo(
     () => ({
@@ -400,86 +429,35 @@ export function InteractivePage({ projectId }: { projectId: string }) {
                 style={{ width: 160 }}
               />
             </label>
+            <label
+              style={{ margin: 0, fontWeight: 400 }}
+              title="第1階層のクラスタごとに凸包(なわばり)を半透明で表示します。点の色は第2階層なので、両方の階層を同時に読めます"
+            >
+              <input
+                type="checkbox"
+                style={{ width: "auto", marginRight: 4 }}
+                checked={showHull}
+                onChange={(e) => setShowHull(e.target.checked)}
+              />
+              凸包(第1階層)
+            </label>
             <button type="button" className="primary" onClick={runLabelling} disabled={!assignments || labelling}>
               {labelling ? "ラベリング中..." : "この構成でラベリング → レポート生成"}
             </button>
             <span className="note">{status}</span>
           </div>
-          <details className="card" style={{ marginTop: 0 }}>
-            <summary style={{ cursor: "pointer" }}>
-              UMAP 詳細パラメータ{paramsDirty ? "(変更あり — 再実行で反映)" : ""}
-            </summary>
-            <div className="row" style={{ marginTop: 8 }}>
-              <label style={{ margin: 0, fontWeight: 400 }}>
-                nNeighbors: {umapParams.nNeighbors}
-                <br />
-                <input
-                  type="range"
-                  min={2}
-                  max={100}
-                  value={umapParams.nNeighbors}
-                  onChange={(e) => setUmapParams((p) => ({ ...p, nNeighbors: Number(e.target.value) }))}
-                  style={{ width: 160 }}
-                />
-                <span className="note"> 局所⇔大域</span>
-              </label>
-              <label style={{ margin: 0, fontWeight: 400 }}>
-                minDist: {umapParams.minDist.toFixed(2)}
-                <br />
-                <input
-                  type="range"
-                  min={0}
-                  max={0.99}
-                  step={0.01}
-                  value={umapParams.minDist}
-                  onChange={(e) => setUmapParams((p) => ({ ...p, minDist: Number(e.target.value) }))}
-                  style={{ width: 160 }}
-                />
-                <span className="note"> 密集⇔分散</span>
-              </label>
-              <label style={{ margin: 0, fontWeight: 400 }}>
-                spread: {umapParams.spread.toFixed(1)}
-                <br />
-                <input
-                  type="range"
-                  min={0.5}
-                  max={3}
-                  step={0.1}
-                  value={umapParams.spread}
-                  onChange={(e) => setUmapParams((p) => ({ ...p, spread: Number(e.target.value) }))}
-                  style={{ width: 160 }}
-                />
-                <span className="note"> 全体スケール</span>
-              </label>
-              <label style={{ margin: 0, fontWeight: 400 }}>
-                epochs: {umapParams.nEpochs === 0 ? "自動" : umapParams.nEpochs}
-                <br />
-                <input
-                  type="range"
-                  min={0}
-                  max={1000}
-                  step={50}
-                  value={umapParams.nEpochs}
-                  onChange={(e) => setUmapParams((p) => ({ ...p, nEpochs: Number(e.target.value) }))}
-                  style={{ width: 160 }}
-                />
-                <span className="note"> 反復回数(0=自動)</span>
-              </label>
-              <label style={{ margin: 0, fontWeight: 400 }}>
-                シード
-                <br />
-                <input
-                  value={umapParams.seed}
-                  onChange={(e) => setUmapParams((p) => ({ ...p, seed: e.target.value }))}
-                  style={{ width: 140 }}
-                />
-              </label>
-            </div>
-            <p className="note">
-              パラメータ変更後は「UMAP 再実行」で反映されます(座標はパラメータごとにキャッシュされます)。
-              クラスタ数のスライダーは再実行不要で即時反映です。
+          {coords && !paramsDirty && !umapRunning && (
+            <p className="note" style={{ marginTop: -4 }}>
+              UMAP は決定論的です。パラメータを変えずに再実行しても<b>同じ座標</b>になります。別のレイアウトを見たい
+              場合は、下の「UMAP 詳細パラメータ」を開いてシードを変更してください。
             </p>
-          </details>
+          )}
+          <UmapParamsPanel
+            params={umapParams}
+            onChange={setUmapParams}
+            dirty={paramsDirty}
+            note="パラメータ変更後は「UMAP 再実行」で反映されます(座標はパラメータごとにキャッシュされます)。クラスタ数のスライダーは再実行不要で即時反映です。"
+          />
           <div className="viewer-chart" style={{ height: 520 }}>
             {coords ? (
               <Plot data={plotData} layout={plotLayout} config={{ scrollZoom: true }} />

@@ -523,6 +523,43 @@ kouchou-ai-serverless/
      満たすため、クラスタ未選択でも stance/reason/属性スライダーが直接有効になる
      (`computeEdgeWeights` の `topicConditioned` でゲートを外す)。
      「全体に戻る」で絞り込み前の座標スナップショットへ復元する。
+8. **UMAP 詳細パラメータの露出(2026-07-18)**: UMAP は seedrandom を注入した
+   完全な決定論であり、パラメータを変えずに再実行しても同じ座標になる(ユーザ指摘)。
+   これは意図した挙動だが、「再実行」ボタンだけがあって調整手段が見えないと
+   壊れているように見えるため、3画面すべてに折り畳みの詳細パネル
+   (`src/components/UmapParamsPanel.tsx`)を共有配置した:
+   新規作成ウィザード Step3 / クラスタリング再実行 / 賛否スペクトラム分析。
+   調整項目は nNeighbors・minDist・spread・nEpochs(0=自動)・シードで、
+   「別のレイアウトを試す(シード変更)」「既定値に戻す」を併設する。
+   - **既定値と同じキーは入力に含めない**という規約を全画面で守る
+     (`toUmapInput`)。これによりチェックポイントキー(`umapCheckpointKey`、
+     および今回追加した clustering ステップ側のキー)が既定実行時と一致し、
+     パラメータを触らないユーザは既存キャッシュをそのまま再利用できる。
+   - 通常パイプライン側は `Project.umap` / `Project.umapSeed`(いずれも省略可、
+     既存データ互換)に保存し、`clustering()` の第5引数 `ClusteringOptions` で渡す。
+     併せて clustering ステップのキャッシュキーがクラスタ数のみだった取りこぼしを
+     修正した(パラメータを変えても古い結果が返る不具合)。
+   - 賛否スペクトラム側は既定値が異なる(minDist 0.15 / spread 1.5 /
+     seed "phase2-layout")ため、`src/stance-spectrum/layoutParams.ts` に既定値を置き、
+     パネルの `defaults` プロパティで差し替える。Worker へは `umapParams` メッセージで
+     反映し、`recold: true` で現在座標から強めに焼き直す(ウォームスタートのままだと
+     minDist/spread の変更が見た目にほとんど出ないため)。nEpochs の明示指定は
+     COLD のみ上書きし、WARM(スライダー操作時)は短いままにして連続性を保つ。
+     既定値を Worker 本体ではなく別モジュールに置いたのは、Worker を
+     メインスレッドから import すると `self.onmessage` が登録されてしまうため。
+9. **クラスタリング再実行画面の階層表示(2026-07-18)**: 第1階層を凸包(なわばり)、
+   第2階層を点の色で表し、1枚の散布図で両方の粒度を読めるようにした。
+   描画方式は賛否スペクトラム側と同じ(SVG scatter + `fill: "toself"`。
+   SVG は scattergl の前面に来るため塗りは薄くする)。クラスタ数スライダーは
+   従来どおり UMAP を再実行せず KMeans+ward のみを即時再計算する。
+10. **コスト見積りを選択中モデルの単価で計算する(2026-07-18)**: Step4 の費用表示に
+    2つの誤りがあった。(a) ローカル実行の判定が chat/embedding の OR だったため、
+    チャットだけ Gemini Nano で埋め込みは API という構成で「全額 0 円」と表示していた。
+    (b) 単価が `gpt-5.4-nano + text-embedding-3-small` 固定で、どのモデルを選んでも
+    同じ金額が出ていた。`estimateSlotCosts`(`src/lib/estimate.ts`)でスロットごとに
+    `lookupModelPrice` を引き、local(0 円) / usd(実単価・Flex は 50%) /
+    unknown(単価不明) の3状態を返すようにした。unknown で既定価格を当てると
+    別モデルの値段を表示することになるため、金額を出さず合計からも除外し注記する。
 
 ## 12. 実装上の注意
 

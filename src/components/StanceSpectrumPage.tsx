@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { generateImage } from "../lib/imageGen";
 import { requestChat, Semaphore } from "../lib/llm/client";
 import { parseLabelResponse } from "../lib/llm/jsonParse";
 import { fnv1a } from "../lib/pipeline/clusterTable";
@@ -11,6 +12,8 @@ import { analyzeAttributes, computeAttributeSimilarities, encodeAttribute } from
 import { type TrackedAssignment, trackClusters } from "../stance-spectrum/clusterTracker";
 import { computeEdgeWeights, cutWardToK, type EdgeSet, subsetEdges } from "../stance-spectrum/graph";
 import { STANCE_LABEL_JA, summarizeCluster } from "../stance-spectrum/labelTemplate";
+import { LAYOUT_UMAP_DEFAULTS, type LayoutUmapParams } from "../stance-spectrum/layoutParams";
+import { buildStancePonchiePrompt } from "../stance-spectrum/ponchiePrompt";
 import { buildEdgesWithWorker, prepareStanceSpectrumRecords } from "../stance-spectrum/prepare";
 import { deserializeSample, serializeSample } from "../stance-spectrum/sample";
 import {
@@ -24,7 +27,8 @@ import type { ClusterView, Codebook, OpinionRecord } from "../stance-spectrum/ty
 import { DEFAULT_VIEW, dominantStance, stanceScore } from "../stance-spectrum/types";
 import { useSettings } from "../store/settings";
 import type { EmbeddingResult } from "../types/project";
-import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
+import { estimateActualCostUsd, isProviderConfigured, PRESETS, resolveEndpoint } from "../types/settings";
+import { UmapParamsPanel } from "./UmapParamsPanel";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
 import { convexHull } from "./viewer/ScatterChart";
@@ -37,6 +41,9 @@ import { convexHull } from "./viewer/ScatterChart";
 // - projectId === "sample" のときは事前分析済みサンプルを読み込む(LLM 不要)
 
 type Coords = { x: Float32Array; y: Float32Array };
+
+/** checkpoints に保存するポンチ絵(画像 + 生成メタデータ) */
+type StancePonchieChunk = { blob: Blob; prompt: string; model: string; createdAt: number };
 
 // 同梱の事前分析済みサンプル(public/ の JSON)。projectId がこの id のときサンプルモードになる。
 export const STANCE_SPECTRUM_SAMPLES = [
@@ -80,6 +87,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   // 凸包(クラスタのなわばり)は既定オン。グラフクラスタは全体ビューでは空間的に
   // 重なりやすく、なわばりを見せた方がクラスタの範囲を掴みやすい
   const [showHull, setShowHull] = useState(true);
+  // 表示用レイアウト UMAP の詳細パラメータ(通常は既定値のまま。拡張設定)
+  const [layoutUmap, setLayoutUmap] = useState<LayoutUmapParams>(LAYOUT_UMAP_DEFAULTS);
   // トピック絞り込み(ドリルダウン)。indices はグローバルインデックス。
   // 混在したままの全体 UMAP ではなく、トピックを選んでから全キャンバスで軸分離する
   const [scope, setScope] = useState<{ indices: number[]; label: string } | null>(null);
@@ -89,6 +98,15 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   const [llmLabels, setLlmLabels] = useState<Map<string, { label: string; description: string }>>(new Map());
   const [labeling, setLabeling] = useState(false);
   const [savedViews, setSavedViews] = useState<ClusterView[]>([]);
+
+  // ポンチ絵(現在のビューから生成した概念図)。checkpoints の chunk に保存するので、
+  // プロジェクト削除(deleteStanceSpectrumProjectData)の namespace 一括削除に自動で乗る
+  const [ponchie, setPonchie] = useState<StancePonchieChunk | null>(null);
+  const [ponchieUrl, setPonchieUrl] = useState<string | null>(null);
+  const [ponchieGenerating, setPonchieGenerating] = useState(false);
+  const [ponchieError, setPonchieError] = useState<string | null>(null);
+  const [ponchieLightbox, setPonchieLightbox] = useState(false);
+  const ponchieAbortRef = useRef<AbortController | null>(null);
 
   // 自動復元は1プロジェクトにつき1回だけ試す(失敗後にループしないため)
   const restoreAttemptedRef = useRef(false);
@@ -122,6 +140,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
     return () => {
       layoutWorkerRef.current?.terminate();
       abortRef.current?.abort();
+      ponchieAbortRef.current?.abort();
     };
   }, []);
 
@@ -134,6 +153,43 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   // 賛否スペクトラム分析は通常版とは独立した投入口(抽出/埋め込みを張り直す)ため、
   // チェックポイントも通常版(projectId)と衝突しない専用 namespace に隔離する。
   const checkpointsId = isSample ? sampleNamespace(projectId) : projectNamespace(projectId);
+
+  // 保存済みポンチ絵の復元。cancelled ガードで、読み込み前に遷移した場合の混入を防ぐ
+  useEffect(() => {
+    let cancelled = false;
+    setPonchie(null);
+    setPonchieError(null);
+    dexieCheckpoints(checkpointsId)
+      .getChunk(CHUNK_STEP.ponchie, "current")
+      .then((chunk) => {
+        if (!cancelled && chunk) setPonchie(chunk as StancePonchieChunk);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [checkpointsId]);
+
+  // オブジェクト URL は blob からこの effect で一元管理し、cleanup で必ず revoke する
+  const ponchieBlob = ponchie?.blob ?? null;
+  useEffect(() => {
+    if (!ponchieBlob) {
+      setPonchieUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(ponchieBlob);
+    setPonchieUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [ponchieBlob]);
+
+  // ライトボックスは Escape でも閉じる
+  useEffect(() => {
+    if (!ponchieLightbox) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPonchieLightbox(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [ponchieLightbox]);
 
   const buildCtx = useCallback((): PipelineContext | null => {
     if (!isSample && !project) return null;
@@ -324,6 +380,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       }
     };
     worker.postMessage({ type: "init", x: initial.x, y: initial.y });
+    // 直後の "edges" で使われるよう、パラメータは init と recluster の間に流す
+    worker.postMessage({ type: "umapParams", params: layoutUmap, recold: false });
     recluster(recs, edgeSet, viewForRecluster, null, worker, topicConditioned);
   };
 
@@ -464,6 +522,17 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
    *
    * 埋め込みも UMAP 本体も再計算しないので LLM コストはゼロ、待ち時間も焼きなましだけ。
    */
+  /**
+   * レイアウト UMAP の詳細パラメータ変更。現在の座標を出発点に、初回同様の強さで
+   * 焼き直す(recold=true)。ウォームスタートのままだと minDist/spread の変更が
+   * ほとんど見た目に出ないため。座標は破棄しないので LLM コストはゼロ。
+   */
+  const applyLayoutUmap = (next: LayoutUmapParams) => {
+    setLayoutUmap(next);
+    layoutWorkerRef.current?.postMessage({ type: "umapParams", params: next, recold: true });
+    setStatus("UMAP パラメータを変更して焼き直しています...");
+  };
+
   const resetLayout = () => {
     if (!records || !edges) return;
     const pristine = initialCoordsRef.current;
@@ -717,18 +786,19 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   }, [clusterSummaries, coords, colorByCluster, llmLabels]);
 
   // ---- クラスタ選択(focus+context) ----
+  // stance/理由の重みは、クラスタ選択中はそのクラスタ内の辺にゲートなしで効く
+  // (computeEdgeWeights の focus 判定)。したがって:
+  // - 重みゼロのときのクリックは純粋なハイライトで、レイアウトは動かさない
+  // - 重みが既に入っているときは、選択の変化で辺の重みが実際に変わるので即レイアウトに反映する
+  //   (選択後にスライダーを動かした場合は updateView 経由で同じ再計算が走る)
+  // トピック絞り込み中はゲートが常に外れていて選択で重みが変わらないため、再加熱しない。
   const selectCluster = (clusterId: string | null) => {
     setExplanation(null);
-    // クリックは選択ハイライトのみ(UMAP は動かさない)。stance/理由を選択クラスタ内に
-    // 適用して分裂させるのは、明示ボタン「選択クラスタを分裂」で行う。
-    setView((v) => ({ ...v, selectedClusterId: clusterId }));
-  };
-
-  // focus+context の明示適用: 現在の view(選択クラスタ + stance/理由の重み)でレイアウトを
-  // 組み直し、選択クラスタ内を分裂させる。スライダー操作と違い、クリックでは起きない。
-  const applyFocusSplit = () => {
-    if (!activeRecords || !activeEdges) return;
-    recluster(activeRecords, activeEdges, view, assignmentRef.current, null, scope !== null);
+    const next = { ...view, selectedClusterId: clusterId };
+    setView(next);
+    if (scope === null && (next.stanceWeight > 0 || next.reasonWeight > 0) && activeRecords && activeEdges) {
+      recluster(activeRecords, activeEdges, next, assignmentRef.current, null, false);
+    }
   };
 
   // ---- LLM 解説(オンデマンド・構成ハッシュでキャッシュ) ----
@@ -885,6 +955,67 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
     : clusterSummaries.length === 0
       ? "レイアウトが収束してクラスタが確定すると使えます。"
       : "";
+
+  // ポンチ絵生成は画像スロット(チャットとは別)を使う。ViewerPage と同じく、
+  // プロバイダのキー削除後もプリセットの baseUrl が残るため設定済み判定を併用する
+  const imageEndpoint = resolveEndpoint(settings, "image");
+  const imageConfigured =
+    settings.imageSlot.provider !== null &&
+    isProviderConfigured(settings.imageSlot.provider, settings) &&
+    !!imageEndpoint.baseUrl &&
+    !!imageEndpoint.model;
+  const imagePrice = PRESETS.find((p) => p.id === settings.imageSlot.provider)?.knownImageModels?.find(
+    (m) => m.id === imageEndpoint.model,
+  )?.price;
+  const ponchieDisabledReason = !imageConfigured
+    ? "設定画面で画像生成プロバイダを設定すると使えます。"
+    : clusterSummaries.length === 0
+      ? "レイアウトが収束してクラスタが確定すると使えます。"
+      : "";
+
+  const displayTitle = (isSample ? title : project?.title) || "賛否スペクトラム分析";
+
+  const generatePonchie = async () => {
+    if (ponchieDisabledReason) return;
+    const controller = new AbortController();
+    ponchieAbortRef.current = controller;
+    setPonchieGenerating(true);
+    setPonchieError(null);
+    try {
+      // 現在のビューのクラスタ構成から組み立てる。LLM ラベル(構成ハッシュで引く)があれば優先
+      const prompt = buildStancePonchiePrompt(
+        displayTitle,
+        clusterSummaries.map((summary) => {
+          const llm = llmLabels.get(summary.hash);
+          return {
+            label: llm?.label ?? summary.label,
+            description: llm?.description,
+            size: summary.size,
+            stanceMix: summary.stanceMix,
+          };
+        }),
+      );
+      const blob = await generateImage(imageEndpoint, prompt, { signal: controller.signal });
+      const chunk: StancePonchieChunk = { blob, prompt, model: imageEndpoint.model, createdAt: Date.now() };
+      await dexieCheckpoints(checkpointsId).putChunk(CHUNK_STEP.ponchie, "current", chunk);
+      setPonchie(chunk);
+    } catch (e) {
+      // 中断(AbortError)はユーザ操作なのでエラー表示しない
+      if (!(e instanceof DOMException && e.name === "AbortError")) {
+        setPonchieError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setPonchieGenerating(false);
+      ponchieAbortRef.current = null;
+    }
+  };
+
+  const deletePonchie = async () => {
+    // 課金して生成した画像がワンクリックで消えるのを防ぐ
+    if (!confirm("生成済みのポンチ絵を削除しますか?(再生成には API 費用がかかります)")) return;
+    await db.chunkCache.delete([checkpointsId, CHUNK_STEP.ponchie, "current"]);
+    setPonchie(null);
+  };
   const selectedAttrInfo = attributeInfos.find((a) => a.key === view.attributeKey);
 
   // 累計トークン → コスト概算(チャットモデル単価ベース。ローカル実行や単価不明は費用非表示)
@@ -1196,6 +1327,13 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               )}
             </div>
 
+            <UmapParamsPanel
+              params={layoutUmap}
+              onChange={applyLayoutUmap}
+              defaults={LAYOUT_UMAP_DEFAULTS}
+              note="レイアウト用 UMAP の設定です。変更すると現在の座標から強めに焼き直します(埋め込み・LLM は再実行しません)。重み設定とは独立で、保存ビューには含まれません。"
+            />
+
             {view.selectedClusterId === null ? (
               <p className="note">
                 点をクリックするとクラスタを選択できます。スタンス/理由スライダーは選択中のクラスタ内
@@ -1210,20 +1348,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                     return (s && llmLabels.get(s.hash)?.label) ?? s?.label;
                   })()}
                 </b>{" "}
-                — スタンス/理由を上げて「分裂」を押すと、このクラスタ内が賛否・理由で分かれます。{" "}
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={applyFocusSplit}
-                  disabled={view.stanceWeight === 0 && view.reasonWeight === 0}
-                  title={
-                    view.stanceWeight === 0 && view.reasonWeight === 0
-                      ? "先にスタンスか理由の重みを上げてください"
-                      : "現在のスタンス/理由の重みを選択クラスタ内に適用してレイアウトを組み直します"
-                  }
-                >
-                  選択クラスタを分裂
-                </button>{" "}
+                — スタンス/理由スライダーを動かすと、このクラスタの中だけが賛否・理由で分かれます
+                (周囲のクラスタは文脈として残ります)。{" "}
                 <button type="button" onClick={() => selectCluster(null)}>
                   選択解除
                 </button>{" "}
@@ -1318,6 +1444,102 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               ))}
             </div>
           </section>
+
+          {/* ポンチ絵(現在のビューから生成した概念図)。操作 UI と散布図を1画面に収めるため、
+              生成ボタンごとページ最下部に置く */}
+          <section className="card" style={{ marginTop: 12 }}>
+            <h2>ポンチ絵(概念図)</h2>
+            <div className="row">
+              {ponchieGenerating ? (
+                <button type="button" onClick={() => ponchieAbortRef.current?.abort()}>
+                  ポンチ絵の生成を中断
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={generatePonchie}
+                  disabled={!!ponchieDisabledReason}
+                  title={
+                    ponchieDisabledReason ||
+                    `現在のクラスタ構成(ラベル・件数・賛否の内訳)からポンチ絵を生成します${imagePrice ? `。費用の目安: ${imagePrice}` : ""}`
+                  }
+                >
+                  {ponchie ? "ポンチ絵を再生成" : "ポンチ絵を生成"}
+                </button>
+              )}
+              {/* 押せない理由は tooltip だけだと気づかれないので、その場に文言として出す */}
+              {ponchieDisabledReason && (
+                <span className="note">
+                  {ponchieDisabledReason}
+                  {!imageConfigured && (
+                    <>
+                      {" "}
+                      <a href="#/settings">設定を開く</a>
+                    </>
+                  )}
+                </span>
+              )}
+              {ponchieGenerating && <span className="note">生成しています(数十秒かかることがあります)...</span>}
+            </div>
+            {ponchieError && <div className="error-box">ポンチ絵の生成に失敗しました: {ponchieError}</div>}
+            {ponchie && ponchieUrl && (
+              <div className="row" style={{ alignItems: "flex-start", marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setPonchieLightbox(true)}
+                  title="クリックで拡大表示"
+                  style={{ border: "none", padding: 0, background: "none", cursor: "zoom-in", display: "block" }}
+                >
+                  <img
+                    src={ponchieUrl}
+                    alt="現在のビューの争点を表すポンチ絵"
+                    style={{ maxWidth: "100%", maxHeight: 320 }}
+                  />
+                </button>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <p className="note">
+                    モデル: {ponchie.model} / 生成日時: {new Date(ponchie.createdAt).toLocaleString()}
+                    <br />
+                    生成時点のクラスタ構成の絵です。スライダーで切り直したら「ポンチ絵を再生成」で作り直せます。
+                  </p>
+                  <details>
+                    <summary className="note">生成プロンプトを表示</summary>
+                    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{ponchie.prompt}</pre>
+                  </details>
+                  <button type="button" onClick={deletePonchie} disabled={ponchieGenerating}>
+                    削除
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* ライトボックス: 背景クリックか Escape で閉じる */}
+          {ponchieLightbox && ponchieUrl && (
+            <button
+              type="button"
+              aria-label="拡大表示を閉じる"
+              onClick={() => setPonchieLightbox(false)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 1000,
+                background: "rgba(0, 0, 0, 0.8)",
+                border: "none",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "zoom-out",
+              }}
+            >
+              <img
+                src={ponchieUrl}
+                alt="現在のビューの争点を表すポンチ絵(拡大表示)"
+                style={{ maxWidth: "95vw", maxHeight: "95vh", objectFit: "contain" }}
+              />
+            </button>
+          )}
         </>
       )}
       <div className="row" style={{ marginTop: 12 }}>

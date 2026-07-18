@@ -27,6 +27,8 @@ export const CHUNK_STEP = {
   explain: "stance-spectrum-explain",
   label: "stance-spectrum-label",
   views: "stance-spectrum-views",
+  // ポンチ絵(現在のビューから生成した概念図)。リネーム後の新設キーなので LEGACY 対応は不要
+  ponchie: "stance-spectrum-ponchie",
 } as const;
 
 /** 旧 step キー → 新 step キー。マイグレーションで参照する */
