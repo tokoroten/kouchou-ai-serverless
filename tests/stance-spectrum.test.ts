@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { CacheMissError, memoryCheckpoints, type PipelineContext } from "../src/lib/pipeline/context";
 import { trackClusters } from "../src/stance-spectrum/clusterTracker";
-import { assignTagVector, normalizeTag } from "../src/stance-spectrum/codebook";
-import { normalizeStance } from "../src/stance-spectrum/enrich";
-import { parseExtractEnrich } from "../src/stance-spectrum/extractEnrich";
+import { assignTagVector, buildCodebook, normalizeTag } from "../src/stance-spectrum/codebook";
+import { fallbackEnrichment, normalizeStance } from "../src/stance-spectrum/enrich";
+import { extractAndEnrich, parseExtractEnrich } from "../src/stance-spectrum/extractEnrich";
 import {
   buildCandidateEdges,
   clusterByLayout,
@@ -11,7 +12,7 @@ import {
 } from "../src/stance-spectrum/graph";
 import { summarizeCluster } from "../src/stance-spectrum/labelTemplate";
 import { sparseCosine, stanceSimilarity } from "../src/stance-spectrum/similarity";
-import { migrateNamespace, migrateStep } from "../src/stance-spectrum/storageKeys";
+import { CHUNK_STEP, migrateNamespace, migrateStep } from "../src/stance-spectrum/storageKeys";
 import type { Codebook, OpinionRecord, StanceDistribution } from "../src/stance-spectrum/types";
 import { DEFAULT_VIEW, dominantStance, emptyStance, stanceScore } from "../src/stance-spectrum/types";
 
@@ -349,5 +350,52 @@ describe("storageKeys: phase2 からの永続キー移行", () => {
     expect(migrateStep("codebook")).toBeNull();
     expect(migrateStep("umap")).toBeNull();
     expect(migrateStep("stance-spectrum-extract")).toBeNull();
+  });
+});
+
+describe("cacheOnly: 保存済みデータからの復元は API を呼ばない", () => {
+  const comments = [
+    { commentId: "c1", body: "AIに人権を認めるべきだ", attributes: {} },
+    { commentId: "c2", body: "時期尚早だと思う", attributes: {} },
+  ];
+  const ctxBase = (checkpoints: ReturnType<typeof memoryCheckpoints>, cacheOnly: boolean): PipelineContext => ({
+    // baseUrl が空なので、実際に呼びに行けば必ず失敗する = 呼んでいないことの担保になる
+    chat: { baseUrl: "", apiKey: "", model: "dummy" },
+    embedding: { baseUrl: "", apiKey: "", model: "dummy" },
+    concurrency: 2,
+    checkpoints,
+    cacheOnly,
+  });
+
+  it("キャッシュが無ければ CacheMissError で中断する(勝手に課金しない)", async () => {
+    const checkpoints = memoryCheckpoints();
+    await expect(extractAndEnrich(comments, "prompt", ctxBase(checkpoints, true))).rejects.toBeInstanceOf(
+      CacheMissError,
+    );
+  });
+
+  it("全コメントがキャッシュ済みなら API を呼ばずに復元できる", async () => {
+    const checkpoints = memoryCheckpoints();
+    for (const c of comments) {
+      await checkpoints.putChunk(CHUNK_STEP.extract, c.commentId, [
+        { argument: `${c.commentId} の意見`, enrichment: fallbackEnrichment() },
+      ]);
+    }
+    const result = await extractAndEnrich(comments, "prompt", ctxBase(checkpoints, true));
+    expect(result.args).toHaveLength(2);
+    expect(result.args.map((a) => a.argument)).toEqual(["c1 の意見", "c2 の意見"]);
+  });
+
+  it("一部だけキャッシュ済みでも、足りなければ中断する", async () => {
+    const checkpoints = memoryCheckpoints();
+    await checkpoints.putChunk(CHUNK_STEP.extract, "c1", [{ argument: "c1 の意見", enrichment: fallbackEnrichment() }]);
+    await expect(extractAndEnrich(comments, "prompt", ctxBase(checkpoints, true))).rejects.toBeInstanceOf(
+      CacheMissError,
+    );
+  });
+
+  it("コードブックもキャッシュが無ければ中断する", async () => {
+    const checkpoints = memoryCheckpoints();
+    await expect(buildCodebook([], ctxBase(checkpoints, true))).rejects.toBeInstanceOf(CacheMissError);
   });
 });

@@ -32,7 +32,26 @@ export type PipelineContext = {
   checkpoints: Checkpoints;
   /** シード可能な乱数(サンプリング用)。省略時は Math.random */
   random?: () => number;
+  /**
+   * true のとき、チェックポイントに無いものを API で取りに行かず CacheMissError を投げる。
+   * 「保存済みデータからの復元」を、ユーザに無断で課金を発生させずに試すために使う。
+   * Worker でのローカル計算(候補辺・UMAP)は課金されないので対象外。
+   */
+  cacheOnly?: boolean;
 };
+
+/** cacheOnly 実行中に、キャッシュが無く API 呼び出しが必要になったことを表す */
+export class CacheMissError extends Error {
+  constructor(what: string) {
+    super(`キャッシュがないため API 呼び出しが必要です: ${what}`);
+    this.name = "CacheMissError";
+  }
+}
+
+/** cacheOnly なら CacheMissError を投げる。API を呼ぶ直前に置く */
+export function throwIfCacheOnly(ctx: PipelineContext, what: string): void {
+  if (ctx.cacheOnly) throw new CacheMissError(what);
+}
 
 /** メモリ上のチェックポイント実装(テスト・Node デバッグ用) */
 export function memoryCheckpoints(): Checkpoints {
