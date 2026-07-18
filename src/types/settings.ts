@@ -31,10 +31,14 @@ export type SlotSelection = {
   serviceTier?: string;
 };
 
+export type SlotName = "chat" | "embedding" | "image";
+
 export type Settings = {
   providers: Partial<Record<PresetId, ProviderConfig>>;
   chatSlot: SlotSelection;
   embeddingSlot: SlotSelection;
+  /** ポンチ絵生成に使う画像モデル。images/generations 互換のプロバイダのみ */
+  imageSlot: SlotSelection;
   concurrency: number; // 既定 8
 };
 
@@ -42,19 +46,33 @@ export const DEFAULT_SETTINGS: Settings = {
   providers: {},
   chatSlot: { provider: null, model: "" },
   embeddingSlot: { provider: null, model: "" },
+  imageSlot: { provider: null, model: "" },
   concurrency: 8,
 };
 
+function selectionFor(settings: Settings, slot: SlotName): SlotSelection {
+  if (slot === "chat") return settings.chatSlot;
+  if (slot === "embedding") return settings.embeddingSlot;
+  return settings.imageSlot;
+}
+
+function defaultModelFor(preset: Preset | undefined, slot: SlotName): string {
+  if (!preset) return "";
+  if (slot === "chat") return preset.chatModel ?? "";
+  if (slot === "embedding") return preset.embeddingModel ?? "";
+  return preset.imageModel ?? "";
+}
+
 /** スロット選択を実際の EndpointConfig に解決する */
-export function resolveEndpoint(settings: Settings, slot: "chat" | "embedding"): EndpointConfig {
-  const selection = slot === "chat" ? settings.chatSlot : settings.embeddingSlot;
+export function resolveEndpoint(settings: Settings, slot: SlotName): EndpointConfig {
+  const selection = selectionFor(settings, slot);
   if (!selection.provider) return { baseUrl: "", apiKey: "", model: "" };
   const preset = PRESETS.find((p) => p.id === selection.provider);
   const provider = settings.providers[selection.provider];
   return {
     baseUrl: provider?.baseUrl || preset?.baseUrl || "",
     apiKey: provider?.apiKey ?? "",
-    model: selection.model || (slot === "chat" ? (preset?.chatModel ?? "") : (preset?.embeddingModel ?? "")),
+    model: selection.model || defaultModelFor(preset, slot),
     authHeader: preset?.authHeader ?? "bearer",
     extraHeaders: preset?.extraHeaders,
     reasoningEffort: slot === "chat" ? (selection.reasoningEffort ?? "") : "",
@@ -132,14 +150,18 @@ export type Preset = {
   baseUrl: string;
   chatModel: string;
   embeddingModel: string; // embeddings 非対応なら空
+  /** images/generations 対応プロバイダの既定画像モデル。非対応なら空 */
+  imageModel?: string;
   corsNote: string;
-  /** このプリセットを表示するスロット(省略時は両方) */
-  slot?: "chat" | "embedding";
+  /** このプリセットを表示するスロット(省略時は chat と embedding の両方) */
+  slot?: SlotName;
   authHeader?: "bearer" | "api-key";
   extraHeaders?: Record<string, string>;
   /** 標準モデルリスト(接続テスト前でも選べるようにする)。安い順に並べる */
   knownChatModels?: ModelSuggestion[];
   knownEmbeddingModels?: ModelSuggestion[];
+  /** 画像モデルの候補。images/generations 非対応のプロバイダは省略する */
+  knownImageModels?: ModelSuggestion[];
   /** 処理ティア/ルーティングの選択肢(chat スロット)。無いプロバイダは省略 */
   tierOptions?: { value: string; label: string }[];
   /** プロバイダの稼働状況ページ */
@@ -162,7 +184,12 @@ export const PRESETS: Preset[] = [
     baseUrl: "https://api.openai.com/v1",
     chatModel: "gpt-5.4-nano",
     embeddingModel: "text-embedding-3-small",
+    imageModel: "gpt-image-1",
     corsNote: "そのまま動作します。意見分割・要約は nano / mini 級で十分です。",
+    knownImageModels: [
+      { id: "gpt-image-1", price: "$0.011 - $0.167 / 枚(サイズと品質による)" },
+      { id: "dall-e-3", price: "$0.040 / 枚(1024x1024・standard)" },
+    ],
     knownChatModels: [
       { id: "gpt-5-nano", price: "$0.05 / $0.40" },
       { id: "gpt-4o-mini", price: "$0.15 / $0.60" },
@@ -319,6 +346,18 @@ export const PRESETS: Preset[] = [
     baseUrl: "",
     chatModel: "",
     embeddingModel: "",
+    // 自前の OpenAI 互換サーバが images/generations を持つ場合に使える。
+    // 既定モデル名は分からないので空にし、ユーザに入力させる。
+    imageModel: "",
     corsNote: "OpenAI 互換 API のベース URL(.../v1)を指定してください。",
   },
 ];
+
+/**
+ * このプリセットが画像生成(images/generations)に使えるか。
+ * imageModel を持つプリセットだけを画像スロットの候補にする。
+ * chat/embedding と違い、対応プロバイダがごく限られるため明示的に列挙する。
+ */
+export function supportsImageGeneration(preset: Preset): boolean {
+  return preset.imageModel !== undefined;
+}
