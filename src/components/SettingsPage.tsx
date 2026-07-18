@@ -583,6 +583,117 @@ function HealthCheckCard() {
   );
 }
 
+/**
+ * 保存データの全消去。
+ *
+ * 主な用途は、スキーマのマイグレーションに失敗して db.open() が毎回失敗し、
+ * アプリが起動しなくなったときの復旧手段。そのため Dexie を通さず生の API で
+ * 消す(この画面自体も IndexedDB を読まないので、DB が壊れていても開ける)。
+ */
+function DangerZoneCard() {
+  const [wiping, setWiping] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [wipeOrigin, setWipeOrigin] = useState(false);
+  const [foreign, setForeign] = useState<{ databases: string[]; opfsEntries: string[] } | null>(null);
+
+  // 同じオリジンに同居している他アプリのデータを、消す前に見せる
+  const inspect = async () => {
+    const { listForeignData } = await import("../lib/storage/reset");
+    setForeign(await listForeignData());
+  };
+
+  const wipe = async () => {
+    const extra = wipeOrigin
+      ? `\n\n【注意】このオリジン(${window.location.origin})にある他のアプリのデータ` +
+        "(IndexedDB / OPFS)も削除します。GitHub Pages では同じアカウントの他プロジェクトと共有されます。"
+      : "";
+    const ok = window.confirm(
+      "このアプリの保存データを削除します。\n\n" +
+        "・作成したレポートとプロジェクト\n" +
+        "・意見抽出や埋め込みなど、LLM を使って生成した中間データ(再実行には再課金が必要です)" +
+        extra +
+        "\n\nこの操作は取り消せません。必要なレポートは先に JSON でエクスポートしてください。\n\n続行しますか?",
+    );
+    if (!ok) return;
+    if (!window.confirm("本当に削除しますか? 削除後はページを再読み込みします。")) return;
+
+    setWiping(true);
+    setResult(null);
+    try {
+      const { wipeStoredData } = await import("../lib/storage/reset");
+      const report = await wipeStoredData(wipeOrigin ? "origin" : "app");
+      if (report.errors.length > 0) {
+        setResult(
+          `一部を削除できませんでした:\n${report.errors.join("\n")}\n\n` +
+            `削除したデータベース: ${report.deletedDatabases.join(", ") || "なし"}`,
+        );
+        setWiping(false);
+        return;
+      }
+      setResult("削除しました。再読み込みします...");
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e) {
+      setResult(`削除に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+      setWiping(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <h2>保存データの削除</h2>
+      <p className="note">
+        このアプリがブラウザに保存したデータ(IndexedDB)を消します。 レポート・プロジェクト・LLM
+        で生成した中間データが失われ、取り消せません。
+        <br />
+        <b>アップデート後にアプリが「読み込み中...」から進まない、または起動しない場合の復旧手段</b>
+        としても使えます(データ形式の変換に失敗した状態をここから初期化できます)。 必要なレポートは先に JSON
+        エクスポートしておいてください。
+      </p>
+      <p className="note">
+        API キーなどの設定は消えません(下の「設定をすべて削除」で消せます)。
+        ローカル埋め込みモデルのキャッシュも対象外です。
+      </p>
+
+      <label style={{ fontWeight: 400 }}>
+        <input
+          type="checkbox"
+          style={{ width: "auto", marginRight: 6 }}
+          checked={wipeOrigin}
+          onChange={(e) => {
+            setWipeOrigin(e.target.checked);
+            if (e.target.checked && !foreign) inspect();
+          }}
+        />
+        このオリジンの他のデータ(他アプリの IndexedDB / OPFS)も削除する
+      </label>
+      <p className="note" style={{ margin: "4px 0 8px" }}>
+        IndexedDB と OPFS はパスではなく<b>オリジン単位</b>です。GitHub Pages
+        で公開している場合、同じアカウントの他プロジェクトとオリジンを共有するため、
+        <b>無関係なアプリのデータまで消えます</b>。本アプリは OPFS
+        を使っていないので、復旧目的では通常このチェックは不要です。
+      </p>
+      {wipeOrigin && foreign && (
+        <p className="note" style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>
+          {foreign.databases.length === 0 && foreign.opfsEntries.length === 0
+            ? "このオリジンに、他アプリのデータは見つかりませんでした。"
+            : "一緒に削除されるもの:\n" +
+              (foreign.databases.length ? `  IndexedDB: ${foreign.databases.join(", ")}\n` : "") +
+              (foreign.opfsEntries.length ? `  OPFS: ${foreign.opfsEntries.join(", ")}` : "")}
+        </p>
+      )}
+
+      <button type="button" className="danger" onClick={wipe} disabled={wiping}>
+        {wiping ? "削除中..." : wipeOrigin ? "オリジンの保存データをすべて削除" : "このアプリの保存データを削除"}
+      </button>
+      {result && (
+        <p className="note" style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+          {result}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { settings, setConcurrency, clearAll } = useSettings();
   return (
@@ -604,6 +715,7 @@ export function SettingsPage() {
         />
         <p className="note">レート制限(429)が頻発する場合は並列数を下げてください。セマフォで制御されます。</p>
       </div>
+      <DangerZoneCard />
       <button type="button" className="danger" onClick={clearAll}>
         設定をすべて削除(API キーを消去)
       </button>

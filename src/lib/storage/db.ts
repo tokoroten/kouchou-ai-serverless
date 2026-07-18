@@ -50,7 +50,9 @@ export type ReportRow = {
   serviceTier?: string;
 };
 
-export const db = new Dexie("kouchou-ai-serverless") as Dexie & {
+export const DB_NAME = "kouchou-ai-serverless";
+
+export const db = new Dexie(DB_NAME) as Dexie & {
   projects: EntityTable<Project, "id">;
   stepResults: Table<StepResultRow, [string, string]>;
   extractionCache: Table<ExtractionCacheRow, [string, string]>;
