@@ -99,6 +99,11 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   const attrSimCacheRef = useRef<Map<string, Float32Array>>(new Map());
   // 全体ビューの座標スナップショット(ドリルダウンから戻るときの復元用)
   const globalCoordsRef = useRef<Coords | null>(null);
+  // 初期 UMAP 座標の原本(スライダー操作で変化しない)。レイアウトのやり直しに使う。
+  // ウォームスタートは現在座標から局所最適化を再開するため経路依存になり、重みを
+  // 元に戻しても元のレイアウトには戻らない。ここから焼き直せば、重みに対して
+  // 決定的な(乱数シードは固定)レイアウトが得られる。
+  const initialCoordsRef = useRef<Coords | null>(null);
   // レイアウト収束時に Worker が計算した Ward 併合列。K スライダーはこれを切り直すだけ。
   const linkageRef = useRef<{ a: Int32Array; b: Int32Array; n: number } | null>(null);
   const clusterKRef = useRef(DEFAULT_VIEW.clusterK);
@@ -163,6 +168,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
         setCodebook(sample.codebook);
         setEdges(sample.edges);
         setCoords({ x: sample.coords.x.slice(), y: sample.coords.y.slice() });
+        initialCoordsRef.current = { x: sample.coords.x.slice(), y: sample.coords.y.slice() };
         startLayout(sample.coords, sample.records, sample.edges);
         setStatus("サンプル準備完了 — スライダーで再クラスタリングできます");
       } catch (e) {
@@ -218,6 +224,7 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
         await dexieCheckpoints(checkpointsId).putChunk("umap", key, initial);
       }
       setCoords({ x: initial.x.slice(), y: initial.y.slice() });
+      initialCoordsRef.current = { x: initial.x.slice(), y: initial.y.slice() };
       startLayout(initial, recs, edgeSet);
       setStatus(cacheOnly ? "保存済みデータから復元しました" : "準備完了 — スライダーで再クラスタリングできます");
     } catch (e) {
@@ -440,6 +447,46 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       setCoords({ x: initial.x.slice(), y: initial.y.slice() });
       startLayout(initial, records, edges, nextView, false);
     }
+  };
+
+  /**
+   * レイアウトのやり直し。初期 UMAP 座標に戻し、現在の重みで焼き直す。
+   *
+   * スライダーはウォームスタート(現在座標から局所最適化を再開)で連続的に動くため、
+   * 到達したレイアウトは重みだけでなく操作履歴にも依存する。スタンスを上げて分離させて
+   * から下げても元に戻らないのはこのため。ここから焼き直すと履歴が切れ、同じ重みなら
+   * 同じレイアウトになる(乱数シードは固定なので決定的)。保存したビューを忠実に
+   * 再現したいときにも使う。
+   *
+   * 埋め込みも UMAP 本体も再計算しないので LLM コストはゼロ、待ち時間も焼きなましだけ。
+   */
+  const resetLayout = () => {
+    if (!records || !edges) return;
+    const pristine = initialCoordsRef.current;
+    if (!pristine) return;
+    setAssignment(null);
+    setExplanation(null);
+    attrSimCacheRef.current = new Map();
+    const nextView = { ...view, selectedClusterId: null };
+    setView(nextView);
+
+    if (scope) {
+      // 絞り込み中は、初期座標の同じ部分集合から焼き直す(スコープは維持)
+      const subX = new Float32Array(scope.indices.length);
+      const subY = new Float32Array(scope.indices.length);
+      scope.indices.forEach((globalIndex, k) => {
+        subX[k] = pristine.x[globalIndex];
+        subY[k] = pristine.y[globalIndex];
+      });
+      const subRecords = scope.indices.map((i) => records[i]);
+      setCoords({ x: subX.slice(), y: subY.slice() });
+      startLayout({ x: subX, y: subY }, subRecords, subsetEdges(edges, scope.indices), nextView, true);
+    } else {
+      globalCoordsRef.current = { x: pristine.x.slice(), y: pristine.y.slice() };
+      setCoords({ x: pristine.x.slice(), y: pristine.y.slice() });
+      startLayout({ x: pristine.x.slice(), y: pristine.y.slice() }, records, edges, nextView, false);
+    }
+    setStatus("初期座標からレイアウトを作り直しました");
   };
 
   // コードブックのトピック別件数(ドリルダウンの選択肢)
@@ -1088,6 +1135,13 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                 title="現在の配置から今すぐクラスタを切り直します(Ward 併合列を再構築)。通常はレイアウトが収束したときに自動で切り直されるので、手動での実行は任意です"
               >
                 今すぐ切り直す
+              </button>
+              <button
+                type="button"
+                onClick={resetLayout}
+                title="初期座標に戻して、現在の重みでレイアウトを作り直します。スライダーは現在の配置から連続的に動くため結果が操作履歴に依存します(重みを戻しても元の配置には戻りません)。ここから焼き直すと履歴が切れ、同じ重みなら必ず同じレイアウトになります。LLM は呼びません"
+              >
+                レイアウトを作り直す
               </button>
               <button
                 type="button"
