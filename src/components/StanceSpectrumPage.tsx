@@ -786,18 +786,19 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
   }, [clusterSummaries, coords, colorByCluster, llmLabels]);
 
   // ---- クラスタ選択(focus+context) ----
+  // stance/理由の重みは、クラスタ選択中はそのクラスタ内の辺にゲートなしで効く
+  // (computeEdgeWeights の focus 判定)。したがって:
+  // - 重みゼロのときのクリックは純粋なハイライトで、レイアウトは動かさない
+  // - 重みが既に入っているときは、選択の変化で辺の重みが実際に変わるので即レイアウトに反映する
+  //   (選択後にスライダーを動かした場合は updateView 経由で同じ再計算が走る)
+  // トピック絞り込み中はゲートが常に外れていて選択で重みが変わらないため、再加熱しない。
   const selectCluster = (clusterId: string | null) => {
     setExplanation(null);
-    // クリックは選択ハイライトのみ(UMAP は動かさない)。stance/理由を選択クラスタ内に
-    // 適用して分裂させるのは、明示ボタン「選択クラスタを分裂」で行う。
-    setView((v) => ({ ...v, selectedClusterId: clusterId }));
-  };
-
-  // focus+context の明示適用: 現在の view(選択クラスタ + stance/理由の重み)でレイアウトを
-  // 組み直し、選択クラスタ内を分裂させる。スライダー操作と違い、クリックでは起きない。
-  const applyFocusSplit = () => {
-    if (!activeRecords || !activeEdges) return;
-    recluster(activeRecords, activeEdges, view, assignmentRef.current, null, scope !== null);
+    const next = { ...view, selectedClusterId: clusterId };
+    setView(next);
+    if (scope === null && (next.stanceWeight > 0 || next.reasonWeight > 0) && activeRecords && activeEdges) {
+      recluster(activeRecords, activeEdges, next, assignmentRef.current, null, false);
+    }
   };
 
   // ---- LLM 解説(オンデマンド・構成ハッシュでキャッシュ) ----
@@ -1347,20 +1348,8 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
                     return (s && llmLabels.get(s.hash)?.label) ?? s?.label;
                   })()}
                 </b>{" "}
-                — スタンス/理由を上げて「分裂」を押すと、このクラスタ内が賛否・理由で分かれます。{" "}
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={applyFocusSplit}
-                  disabled={view.stanceWeight === 0 && view.reasonWeight === 0}
-                  title={
-                    view.stanceWeight === 0 && view.reasonWeight === 0
-                      ? "先にスタンスか理由の重みを上げてください"
-                      : "現在のスタンス/理由の重みを選択クラスタ内に適用してレイアウトを組み直します"
-                  }
-                >
-                  選択クラスタを分裂
-                </button>{" "}
+                — スタンス/理由スライダーを動かすと、このクラスタの中だけが賛否・理由で分かれます
+                (周囲のクラスタは文脈として残ります)。{" "}
                 <button type="button" onClick={() => selectCluster(null)}>
                   選択解除
                 </button>{" "}
