@@ -6,7 +6,8 @@ import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overvie
 import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
-import { resolveEndpoint } from "../types/settings";
+import { pipelineReadiness, resolveEndpoint } from "../types/settings";
+import { SetupBanner } from "./SetupBanner";
 
 // 賛否スペクトラム分析の専用データ投入口。通常版パイプラインを経由せず、CSV から直接
 // Project を作って #/stance-spectrum/{id} へ入る(結合抽出は賛否スペクトラム分析側で走る)。
@@ -37,7 +38,8 @@ export function StanceSpectrumNewPage() {
 
   const chatNow = resolveEndpoint(settings, "chat");
   const embeddingNow = resolveEndpoint(settings, "embedding");
-  const settingsMissing = !chatNow.baseUrl || !embeddingNow.baseUrl;
+  // 実行を止めるのは「未設定」のときだけ(疎通未確認は警告に留めて実行はさせる)
+  const settingsMissing = pipelineReadiness(settings).blocked;
 
   const loadFile = async (f: File, enc: "UTF-8" | "Shift_JIS") => {
     setError(null);
@@ -112,13 +114,7 @@ export function StanceSpectrumNewPage() {
         CSV を取り込んで、そのまま賛否スペクトラム分析に入ります。通常版の実行は不要です。意見抽出・
         stance/topics/reasons の付与・ベクトル化は「開く」の後、賛否スペクトラム分析の画面で一括実行されます。
       </p>
-      {settingsMissing && (
-        <div className="error-box">
-          LLM プロバイダが未設定です(チャット{chatNow.baseUrl ? "設定済み" : "未設定"} / 埋め込み
-          {embeddingNow.baseUrl ? "設定済み" : "未設定"})。先に <a href="#/settings">設定画面</a> で API
-          キーとモデルを設定してください。
-        </div>
-      )}
+      <SetupBanner context="create" />
       {error && <div className="error-box">{error}</div>}
 
       <div className="card">

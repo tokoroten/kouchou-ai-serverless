@@ -15,6 +15,7 @@ import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
 import { estimateActualCostUsd, resolveEndpoint } from "../types/settings";
+import { SetupBanner } from "./SetupBanner";
 
 // ホーム / レポート一覧(DESIGN §7-1)。
 
@@ -160,6 +161,7 @@ export function HomePage() {
           />
         </div>
       </div>
+      <SetupBanner />
       <p className="note">
         すべての処理はブラウザ内で完結します。データは LLM プロバイダ以外へ送信されません。 レポートはこのブラウザの
         IndexedDB に保存されます — 大事なレポートは必ず JSON エクスポートで手元に保存してください。

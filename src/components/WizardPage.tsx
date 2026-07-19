@@ -7,7 +7,8 @@ import { db, requestPersistentStorage } from "../lib/storage/db";
 import { extractionPrompt, initialLabellingPrompt, mergeLabellingPrompt, overviewPrompt } from "../prompts";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
-import { resolveEndpoint } from "../types/settings";
+import { pipelineReadiness, resolveEndpoint } from "../types/settings";
+import { SetupBanner } from "./SetupBanner";
 import { toUmapInput, UMAP_UI_DEFAULTS, UmapParamsPanel, type UmapUiParams } from "./UmapParamsPanel";
 
 /**
@@ -134,8 +135,14 @@ export function WizardPage() {
     }
     const chatEndpoint = resolveEndpoint(settings, "chat");
     const embeddingEndpoint = resolveEndpoint(settings, "embedding");
-    if (!chatEndpoint.baseUrl || !embeddingEndpoint.baseUrl) {
-      setError("先に「設定」でチャットと埋め込みのプロバイダを設定してください。");
+    const readiness = pipelineReadiness(settings);
+    if (readiness.blocked) {
+      setError(
+        `先に「設定」でチャットと埋め込みのプロバイダを設定してください。(${readiness.slots
+          .filter((s) => s.readiness.state === "unset")
+          .map((s) => s.readiness.reason)
+          .join(" / ")})`,
+      );
       return;
     }
     await requestPersistentStorage();
@@ -177,18 +184,11 @@ export function WizardPage() {
   // 費用は「実際に選択中のモデルの単価」でスロットごとに算出する
   // (ローカル実行は 0 円、既知モデルリストに単価が無ければ金額を出さない)
   const costs = estimateSlotCosts(estimate, chatEndpointNow, embeddingEndpointNow);
-  const settingsMissing = !chatEndpointNow.baseUrl || !embeddingEndpointNow.baseUrl;
 
   return (
     <div>
       <h1>新規レポート作成 — Step {step}/4</h1>
-      {settingsMissing && (
-        <div className="error-box">
-          LLM プロバイダが未設定です(チャット{chatEndpointNow.baseUrl ? "設定済み" : "未設定"} / 埋め込み
-          {embeddingEndpointNow.baseUrl ? "設定済み" : "未設定"})。先に <a href="#/settings">設定画面</a> で API
-          キーとモデルを設定してください。設定しないままでは Step 4 で実行できません。
-        </div>
-      )}
+      <SetupBanner context="create" />
       {error && <div className="error-box">{error}</div>}
       {step > 1 && preview && (
         <p className="note">

@@ -27,7 +27,13 @@ import type { ClusterView, Codebook, OpinionRecord } from "../stance-spectrum/ty
 import { DEFAULT_VIEW, dominantStance, stanceScore } from "../stance-spectrum/types";
 import { useSettings } from "../store/settings";
 import type { EmbeddingResult } from "../types/project";
-import { estimateActualCostUsd, isProviderConfigured, PRESETS, resolveEndpoint } from "../types/settings";
+import {
+  estimateActualCostUsd,
+  isProviderConfigured,
+  PRESETS,
+  pipelineReadiness,
+  resolveEndpoint,
+} from "../types/settings";
 import { UmapParamsPanel } from "./UmapParamsPanel";
 import { SOFT_COLORS, wrapLabelText } from "./viewer/colors";
 import { Plot } from "./viewer/Plot";
@@ -956,6 +962,16 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
       ? "レイアウトが収束してクラスタが確定すると使えます。"
       : "";
 
+  // データ準備はチャットと埋め込みの両方を使う。サンプル経由や URL 直打ちでこの画面に
+  // 入ると設定ゲートを通らないため、押せてしまう前に理由を出して止める。
+  const prepareReadiness = pipelineReadiness(settings);
+  const prepareDisabledReason = prepareReadiness.blocked
+    ? `設定画面で LLM を設定すると使えます(${prepareReadiness.slots
+        .filter((s) => s.readiness.state === "unset")
+        .map((s) => s.readiness.reason)
+        .join(" / ")})。`
+    : "";
+
   // ポンチ絵生成は画像スロット(チャットとは別)を使う。ViewerPage と同じく、
   // プロバイダのキー削除後もプリセットの baseUrl が残るため設定済み判定を併用する
   const imageEndpoint = resolveEndpoint(settings, "image");
@@ -1080,11 +1096,17 @@ export function StanceSpectrumPage({ projectId }: { projectId: string }) {
               コメント単位で保存されるため、すでに終わっている分は課金されません。
             </span>
           </p>
-          <button type="button" className="primary" onClick={() => prepare()} disabled={preparing}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => prepare()}
+            disabled={preparing || !!prepareDisabledReason}
+            title={prepareDisabledReason}
+          >
             {preparing ? "準備中..." : "データ準備を実行(LLM API を使用)"}
           </button>
           <span className="note" style={{ marginLeft: 12 }}>
-            {status}
+            {prepareDisabledReason || status}
           </span>
         </div>
       )}

@@ -5,6 +5,7 @@ import {
   type PresetId,
   type ProviderConfig,
   type Settings,
+  type SlotName,
   type SlotSelection,
 } from "../types/settings";
 
@@ -33,6 +34,8 @@ export function fillMissingSettings(persisted: unknown): Settings {
     chatSlot: { ...DEFAULT_SETTINGS.chatSlot, ...saved.chatSlot },
     embeddingSlot: { ...DEFAULT_SETTINGS.embeddingSlot, ...saved.embeddingSlot },
     imageSlot: { ...DEFAULT_SETTINGS.imageSlot, ...saved.imageSlot },
+    // 旧バージョンには無いフィールド。undefined が入ると slotReadiness が参照時に落ちる
+    verification: { ...saved.verification },
   };
 }
 
@@ -44,6 +47,8 @@ type SettingsStore = {
   setEmbeddingSlot: (slot: Partial<SlotSelection>) => void;
   setImageSlot: (slot: Partial<SlotSelection>) => void;
   setConcurrency: (n: number) => void;
+  /** 疎通確認の成否を記録する(成功なら指紋つきで保存、失敗なら記録を消す) */
+  setVerification: (slot: SlotName, fingerprint: string | null) => void;
   clearAll: () => void;
 };
 
@@ -87,6 +92,13 @@ export const useSettings = create<SettingsStore>()(
           settings: { ...state.settings, imageSlot: { ...state.settings.imageSlot, ...slot } },
         })),
       setConcurrency: (n) => set((state) => ({ settings: { ...state.settings, concurrency: n } })),
+      setVerification: (slot, fingerprint) =>
+        set((state) => {
+          const verification = { ...state.settings.verification };
+          if (fingerprint) verification[slot] = { fingerprint, at: Date.now() };
+          else delete verification[slot];
+          return { settings: { ...state.settings, verification } };
+        }),
       clearAll: () => set({ settings: DEFAULT_SETTINGS }),
     }),
     {

@@ -33,6 +33,9 @@ export type SlotSelection = {
 
 export type SlotName = "chat" | "embedding" | "image";
 
+/** 疎通確認に成功した記録。fingerprint は確認した時点の接続構成 */
+export type SlotVerification = { fingerprint: string; at: number };
+
 export type Settings = {
   providers: Partial<Record<PresetId, ProviderConfig>>;
   chatSlot: SlotSelection;
@@ -40,6 +43,8 @@ export type Settings = {
   /** ポンチ絵生成に使う画像モデル。images/generations 互換のプロバイダのみ */
   imageSlot: SlotSelection;
   concurrency: number; // 既定 8
+  /** スロットごとの疎通確認記録。設定を変えると fingerprint が変わり「未確認」に戻る */
+  verification: Partial<Record<SlotName, SlotVerification>>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -48,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   embeddingSlot: { provider: null, model: "" },
   imageSlot: { provider: null, model: "" },
   concurrency: 8,
+  verification: {},
 };
 
 function selectionFor(settings: Settings, slot: SlotName): SlotSelection {
@@ -77,6 +83,77 @@ export function resolveEndpoint(settings: Settings, slot: SlotName): EndpointCon
     extraHeaders: preset?.extraHeaders,
     reasoningEffort: slot === "chat" ? (selection.reasoningEffort ?? "") : "",
     serviceTier: slot === "chat" ? (selection.serviceTier ?? "") : "",
+  };
+}
+
+/**
+ * 接続構成の指紋。疎通確認したときの構成と現在の構成が同じかを判定するために使う。
+ * API キーはそのまま持たず数値ハッシュにする(キー本体は providers 側にあり、
+ * ここで断片を重複して持つ理由がない)。キーを差し替えれば指紋も変わる。
+ *
+ * 「疎通するか」を左右する baseUrl / model / キーだけを見る。処理ティア(flex 等)や
+ * reasoning effort は到達性を変えないので、変えても「未確認」に戻さない
+ * (戻すと、価格や速度をいじるたびに警告が復活して煩わしいだけになる)。
+ */
+export function endpointFingerprint(endpoint: EndpointConfig): string {
+  let hash = 5381;
+  for (let i = 0; i < endpoint.apiKey.length; i++) {
+    hash = ((hash << 5) + hash + endpoint.apiKey.charCodeAt(i)) | 0;
+  }
+  return `${endpoint.baseUrl}|${endpoint.model}|${endpoint.apiKey ? hash : ""}`;
+}
+
+export type SlotReadiness =
+  /** プロバイダ未選択・キー未入力・モデル未指定のいずれか */
+  | { state: "unset"; reason: string }
+  /** 設定は揃っているが、この構成での疎通確認がまだ(または設定変更で無効になった) */
+  | { state: "unverified"; reason: string }
+  | { state: "ok"; reason: "" };
+
+const SLOT_LABEL: Record<SlotName, string> = { chat: "チャット", embedding: "埋め込み", image: "画像生成" };
+
+/**
+ * スロットが実際に使える状態かを一本化して判定する。
+ *
+ * baseUrl の有無だけを見ると、プロバイダのキーを削除した後でもプリセットの baseUrl で
+ * 埋まってしまい「設定済み」と誤判定する。プロバイダ単位の設定(isProviderConfigured)と
+ * モデル指定の有無まで見て、さらに疎通確認の記録と突き合わせる。
+ */
+export function slotReadiness(settings: Settings, slot: SlotName): SlotReadiness {
+  const label = SLOT_LABEL[slot];
+  const selection = selectionFor(settings, slot);
+  if (!selection.provider) return { state: "unset", reason: `${label}のプロバイダが未選択です` };
+  if (!isProviderConfigured(selection.provider, settings)) {
+    const preset = PRESETS.find((p) => p.id === selection.provider);
+    return {
+      state: "unset",
+      reason: `${label}の ${preset?.label ?? selection.provider} が未設定です(API キー / ベース URL)`,
+    };
+  }
+  const endpoint = resolveEndpoint(settings, slot);
+  if (!endpoint.baseUrl) return { state: "unset", reason: `${label}のベース URL が未設定です` };
+  if (!endpoint.model) return { state: "unset", reason: `${label}のモデルが未指定です` };
+
+  const verified = settings.verification?.[slot];
+  if (!verified) return { state: "unverified", reason: `${label}の疎通確認がまだです` };
+  if (verified.fingerprint !== endpointFingerprint(endpoint)) {
+    return { state: "unverified", reason: `${label}は設定を変更したため疎通が未確認です` };
+  }
+  return { state: "ok", reason: "" };
+}
+
+/** 新規レポート作成に必要な chat / embedding が揃っているか */
+export function pipelineReadiness(settings: Settings): {
+  ready: boolean;
+  blocked: boolean;
+  slots: { slot: SlotName; readiness: SlotReadiness }[];
+} {
+  const slots = (["chat", "embedding"] as const).map((slot) => ({ slot, readiness: slotReadiness(settings, slot) }));
+  return {
+    ready: slots.every((s) => s.readiness.state === "ok"),
+    // 未設定が1つでもあれば実行自体できない(未確認は実行だけならできる)
+    blocked: slots.some((s) => s.readiness.state === "unset"),
+    slots,
   };
 }
 

@@ -4,6 +4,7 @@ import { prepareAndTestGeminiNano } from "../lib/llm/geminiNano";
 import { getStorageStatus, requestPersistentStorage, type StorageStatus } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
 import {
+  endpointFingerprint,
   isProviderConfigured,
   PRESETS,
   type PresetId,
@@ -584,7 +585,7 @@ function ImageSlotCard() {
 type HealthItem = { label: string; status: "ok" | "ng" | "running"; detail: string };
 
 function HealthCheckCard() {
-  const { settings } = useSettings();
+  const { settings, setVerification } = useSettings();
   const [items, setItems] = useState<HealthItem[] | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -632,6 +633,8 @@ function HealthCheckCard() {
           ? `${probe.message} / 入力:「${probe.input}」→ 出力:「${probe.output.slice(0, 80)}${probe.output.length > 80 ? "…" : ""}」`
           : probe.message,
       );
+      // 実応答まで通った構成だけを「疎通確認済み」として残す(トップの警告が消える条件)
+      setVerification("chat", probe.ok ? endpointFingerprint(chat) : null);
     }
 
     // 3. 埋め込み疎通(1件埋め込んで次元数を確認)
@@ -646,8 +649,10 @@ function HealthCheckCard() {
           const vectors = await requestEmbeddings(embedding, { texts: ["ヘルスチェック"], timeoutMs: 30_000 });
           update("ok", `次元数 ${vectors[0]?.length}`);
         }
+        setVerification("embedding", endpointFingerprint(embedding));
       } catch (e) {
         update("ng", e instanceof Error ? e.message : String(e));
+        setVerification("embedding", null);
       }
     }
     setRunning(false);
