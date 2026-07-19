@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useRef } from "react";
 import { exportResultJson, parsePreprocessed, parseResultJson } from "../lib/export";
+import { canRecluster, ensureInteractiveProject } from "../lib/reportProject";
 import { navigate } from "../lib/router";
 import { dexieStepStore } from "../lib/storage/checkpoints";
 import {
@@ -233,6 +234,27 @@ export function HomePage() {
               <button type="button" onClick={() => exportResultJson(report.result)}>
                 JSON
               </button>
+              {canRecluster(report.result) && (
+                <button
+                  type="button"
+                  title="このレポートの意見と座標からプロジェクトを復元し、クラスタ数を対話調整して作り直す"
+                  onClick={async () => {
+                    try {
+                      const projectId = await ensureInteractiveProject(
+                        report.id,
+                        report.title,
+                        report.result,
+                        settings,
+                      );
+                      navigate(`/interactive/${projectId}`);
+                    } catch (e) {
+                      alert(`再クラスタリングの準備に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+                    }
+                  }}
+                >
+                  再クラスタリング
+                </button>
+              )}
               <button
                 type="button"
                 className="danger"

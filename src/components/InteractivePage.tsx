@@ -13,7 +13,7 @@ import { overview as overviewStep } from "../lib/pipeline/steps/overview";
 import { navigate } from "../lib/router";
 import { dexieCheckpoints, dexieStepStore } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
-import type { EmbeddingResult, ExtractionResult } from "../types/project";
+import type { ClusteringResult, EmbeddingResult, ExtractionResult } from "../types/project";
 import {
   toUmapInput as toUmapInputShared,
   UMAP_UI_DEFAULTS,
@@ -37,7 +37,10 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const preprocessed = useLiveQuery(async () => {
     const ext = (await db.stepResults.get([projectId, "extraction"]))?.data as ExtractionResult | undefined;
     const emb = (await db.stepResults.get([projectId, "embedding"]))?.data as EmbeddingResult | undefined;
-    return { ext, emb };
+    // 埋め込みが無くても、保存済みクラスタリング結果(=レポートの散布図座標)があれば
+    // その座標の上でクラスタ数を切り直せる。サンプル/インポートしたレポート用の経路。
+    const saved = (await db.stepResults.get([projectId, "clustering"]))?.data as ClusteringResult | undefined;
+    return { ext, emb, saved };
   }, [projectId]);
 
   const [status, setStatus] = useState<string>("");
@@ -50,6 +53,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const [assignments, setAssignments] = useState<Int32Array[] | null>(null);
   const [labelsPreview, setLabelsPreview] = useState<{ id: string; label: string; value: number }[] | null>(null);
   const [labelling, setLabelling] = useState(false);
+  const [preprocessing, setPreprocessing] = useState(false);
   // 階層の見せ方: 第1階層 = 凸包(なわばり)、第2階層 = 点の色。
   // 粗い括りと細かい括りを1枚の散布図で同時に読めるようにする。
   const [showHull, setShowHull] = useState(true);
@@ -101,6 +105,22 @@ export function InteractivePage({ projectId }: { projectId: string }) {
       });
   }, [preprocessed?.emb, coords, projectId, toUmapInput]);
 
+  // 埋め込みが無いプロジェクト(レポートから復元したもの)は、保存済みの散布図座標を
+  // そのまま初期レイアウトにする。UMAP はやり直せないが、クラスタ数の切り直しと
+  // 再ラベリングはこの座標の上でそのまま行える。
+  useEffect(() => {
+    if (coords || preprocessed?.emb) return;
+    const saved = preprocessed?.saved;
+    if (!saved || saved.x.length === 0) return;
+    setCoords({ x: saved.x, y: saved.y });
+    setUmapDone(true);
+    if (saved.clusterNums.length >= 2) {
+      setLv1(saved.clusterNums[0]);
+      setLv2(saved.clusterNums[saved.clusterNums.length - 1]);
+    }
+    setStatus("レポートの散布図座標を復元しました — スライダーでクラスタ数を調整できます");
+  }, [coords, preprocessed?.emb, preprocessed?.saved]);
+
   const buildCtx = useCallback(
     (persistent: boolean): PipelineContext | null => {
       if (!project) return null;
@@ -126,21 +146,28 @@ export function InteractivePage({ projectId }: { projectId: string }) {
     [project, projectId],
   );
 
-  // 前処理(意見抽出+ベクトル化)を単独実行できるようにする
+  // 前処理(意見抽出+ベクトル化)を単独実行できるようにする。
+  // 意見抽出済み(レポートから復元したプロジェクト)なら、ベクトル化だけを実行する。
   const runPreprocess = async () => {
     const ctx = buildCtx(true);
     if (!project || !ctx) return;
     setError(null);
+    setPreprocessing(true);
     try {
-      setStatus("意見抽出中...");
-      const ext = await extractionStep(project.comments, project.prompts.extraction, ctx);
-      await dexieStepStore(projectId).put("extraction", ext);
+      let ext = preprocessed?.ext;
+      if (!ext) {
+        setStatus("意見抽出中...");
+        ext = await extractionStep(project.comments, project.prompts.extraction, ctx);
+        await dexieStepStore(projectId).put("extraction", ext);
+      }
       setStatus("ベクトル化中...");
       const emb = await embeddingStep(ext.args, ctx);
       await dexieStepStore(projectId).put("embedding", emb);
-      setStatus("前処理完了");
+      setStatus("前処理完了 — 「UMAP 実行」でレイアウトを作り直せます");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreprocessing(false);
     }
   };
 
@@ -194,8 +221,8 @@ export function InteractivePage({ projectId }: { projectId: string }) {
 
   // スライダー変更時: 2D 座標上で KMeans + ward を即時再計算
   useEffect(() => {
-    if (!umapDone || !coords || !preprocessed?.emb) return;
-    const count = preprocessed.emb.argIds.length;
+    if (!umapDone || !coords) return;
+    const count = coords.x.length;
     const clamp = (n: number) => Math.max(2, Math.min(n, count));
     const nums = [...new Set([clamp(Math.min(lv1, lv2)), clamp(Math.max(lv1, lv2))])];
     const embedded: number[][] = new Array(count);
@@ -203,21 +230,22 @@ export function InteractivePage({ projectId }: { projectId: string }) {
     const result = clusterXY(embedded, nums, appliedSeed);
     setAssignments(result.assignments);
     setLabelsPreview(null);
-  }, [umapDone, coords, lv1, lv2, preprocessed?.emb, appliedSeed]);
+  }, [umapDone, coords, lv1, lv2, appliedSeed]);
 
   // ラベリング → レポート生成(オンデマンド)
   const runLabelling = async () => {
     const ctx = buildCtx(true);
     const ext = preprocessed?.ext;
-    const emb = preprocessed?.emb;
-    if (!project || !ctx || !ext || !emb || !coords || !assignments) return;
+    // 埋め込みが無いプロジェクトでは、保存済みクラスタリング結果の argIds を使う
+    const argIds = preprocessed?.emb?.argIds ?? preprocessed?.saved?.argIds;
+    if (!project || !ctx || !ext || !argIds || !coords || !assignments) return;
     setError(null);
     setLabelling(true);
     try {
-      const clampN = (n: number) => Math.max(2, Math.min(n, emb.argIds.length));
+      const clampN = (n: number) => Math.max(2, Math.min(n, argIds.length));
       const nums = [...new Set([clampN(Math.min(lv1, lv2)), clampN(Math.max(lv1, lv2))])];
       const clusteringResult = {
-        argIds: emb.argIds,
+        argIds,
         x: coords.x,
         y: coords.y,
         clusterNums: nums,
@@ -345,23 +373,45 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   );
 
   if (!project) return <p>読み込み中...</p>;
-  const hasPreprocess = !!(preprocessed?.ext && preprocessed?.emb);
+  const hasEmbedding = !!preprocessed?.emb;
+  // 埋め込みが無くても、意見 + 保存済み座標があれば対話的な切り直しはできる
+  const hasPreprocess = !!(preprocessed?.ext && (preprocessed?.emb || preprocessed?.saved));
+  const argCount = preprocessed?.emb?.argIds.length ?? preprocessed?.saved?.argIds.length ?? 0;
 
   return (
     <div>
       <h1>{project.title} — クラスタリング再実行</h1>
       <p className="note">
-        ベクトル化済みデータを使い、クラスタリング(UMAP + KMeans + ward)を再実行します。UMAP
-        の収束をライブ表示しながらクラスタ数を対話的に調整でき、ラベリングは構成が決まってから実行します
-        (同一構成のラベルはキャッシュされ無料)。
+        {hasEmbedding
+          ? "ベクトル化済みデータを使い、クラスタリング(UMAP + KMeans + ward)を再実行します。UMAP の収束をライブ表示しながらクラスタ数を対話的に調整でき、ラベリングは構成が決まってから実行します(同一構成のラベルはキャッシュされ無料)。"
+          : "散布図座標の上でクラスタ数(KMeans + ward)を対話的に調整し、決まった構成でラベリングし直します(同一構成のラベルはキャッシュされ無料)。"}
       </p>
       {error && <div className="error-box">{error}</div>}
 
       {!hasPreprocess && (
         <div className="card">
           <p>前処理済みデータがまだありません。ここで前処理だけを実行できます(LLM 呼び出しが発生します)。</p>
-          <button type="button" className="primary" onClick={runPreprocess}>
-            前処理を実行(意見抽出+ベクトル化)
+          <button type="button" className="primary" onClick={runPreprocess} disabled={preprocessing}>
+            {preprocessing ? "前処理中..." : "前処理を実行(意見抽出+ベクトル化)"}
+          </button>
+        </div>
+      )}
+
+      {hasPreprocess && !hasEmbedding && (
+        <div className="card">
+          <p className="note" style={{ margin: 0 }}>
+            このプロジェクトはレポートから復元したため、埋め込みベクトルを持っていません。
+            <b>レポートに保存されていた散布図座標</b>を使い、クラスタ数の切り直しと再ラベリングができます。
+            レイアウト自体(UMAP)をやり直すにはベクトル化が必要です(埋め込み API の課金が発生します)。
+          </p>
+          <button
+            type="button"
+            style={{ marginTop: 8 }}
+            onClick={runPreprocess}
+            disabled={preprocessing}
+            title={`${argCount.toLocaleString()} 件の意見をベクトル化します(意見抽出は再実行しません)`}
+          >
+            {preprocessing ? "ベクトル化中..." : "ベクトル化を実行(UMAP をやり直す場合)"}
           </button>
         </div>
       )}
@@ -373,7 +423,12 @@ export function InteractivePage({ projectId }: { projectId: string }) {
               type="button"
               className={paramsDirty ? "primary umap-dirty" : "primary"}
               onClick={runUmap}
-              disabled={umapRunning}
+              disabled={umapRunning || !hasEmbedding}
+              title={
+                hasEmbedding
+                  ? undefined
+                  : "埋め込みベクトルが無いため UMAP はやり直せません(上のボタンでベクトル化できます)"
+              }
             >
               {umapRunning
                 ? "UMAP 実行中..."
@@ -385,6 +440,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
             </button>
             <button
               type="button"
+              disabled={!hasEmbedding}
               title="意見抽出+ベクトル化の結果を元データごとファイルに保存(別ブラウザで後処理のみ再実行できます)"
               onClick={() => {
                 if (preprocessed?.ext && preprocessed?.emb) {
@@ -423,7 +479,7 @@ export function InteractivePage({ projectId }: { projectId: string }) {
               <input
                 type="range"
                 min={4}
-                max={Math.min(200, preprocessed.emb?.argIds.length ?? 200)}
+                max={Math.min(200, argCount || 200)}
                 value={lv2}
                 onChange={(e) => setLv2(Number(e.target.value))}
                 style={{ width: 160 }}
@@ -446,25 +502,27 @@ export function InteractivePage({ projectId }: { projectId: string }) {
             </button>
             <span className="note">{status}</span>
           </div>
-          {coords && !paramsDirty && !umapRunning && (
+          {hasEmbedding && coords && !paramsDirty && !umapRunning && (
             <p className="note" style={{ marginTop: -4 }}>
               UMAP は決定論的です。パラメータを変えずに再実行しても<b>同じ座標</b>になります。別のレイアウトを見たい
               場合は、下の「UMAP 詳細パラメータ」を開いてシードを変更してください。
             </p>
           )}
-          <UmapParamsPanel
-            params={umapParams}
-            onChange={setUmapParams}
-            dirty={paramsDirty}
-            note="パラメータ変更後は「UMAP 再実行」で反映されます(座標はパラメータごとにキャッシュされます)。クラスタ数のスライダーは再実行不要で即時反映です。"
-          />
+          {/* 埋め込みが無い間は UMAP をやり直せないので、パラメータ調整は出さない */}
+          {hasEmbedding && (
+            <UmapParamsPanel
+              params={umapParams}
+              onChange={setUmapParams}
+              dirty={paramsDirty}
+              note="パラメータ変更後は「UMAP 再実行」で反映されます(座標はパラメータごとにキャッシュされます)。クラスタ数のスライダーは再実行不要で即時反映です。"
+            />
+          )}
           <div className="viewer-chart" style={{ height: 520 }}>
             {coords ? (
               <Plot data={plotData} layout={plotLayout} config={{ scrollZoom: true }} />
             ) : (
               <p style={{ padding: 24 }} className="note">
-                「UMAP 実行」を押すと、{preprocessed.emb?.argIds.length.toLocaleString()}{" "}
-                件の意見の収束過程がここに表示されます。
+                「UMAP 実行」を押すと、{argCount.toLocaleString()} 件の意見の収束過程がここに表示されます。
               </p>
             )}
           </div>

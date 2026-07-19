@@ -8,6 +8,7 @@ import {
   exportSingleHtml,
 } from "../lib/export";
 import { generateAndSavePonchie } from "../lib/imageGen";
+import { canRecluster, ensureInteractiveProject } from "../lib/reportProject";
 import { navigate } from "../lib/router";
 import { db, deleteReportImage, getReportImage, type ReportImageRow } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
@@ -24,6 +25,7 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   const [exporting, setExporting] = useState(false);
   const [exportingPptx, setExportingPptx] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [openingRecluster, setOpeningRecluster] = useState(false);
 
   // ポンチ絵。blob と生成メタデータ(モデル・日時・プロンプト)を行ごと保持する
   const [imageRow, setImageRow] = useState<ReportImageRow | null>(null);
@@ -86,6 +88,9 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   if (report === undefined) return <p>読み込み中...</p>;
   if (report === null || !report) return <p>レポートが見つかりません。</p>;
 
+  // 生成元プロジェクトがあるか、レポート自体に座標が入っていれば再クラスタリングできる
+  const reclusterable = !!project || canRecluster(report.result);
+
   const exportHtml = async () => {
     setExporting(true);
     try {
@@ -102,6 +107,21 @@ export function ViewerPage({ reportId }: { reportId: string }) {
       alert(`エクスポートに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setExporting(false);
+    }
+  };
+
+  // クラスタリング再実行。生成元プロジェクトが無いレポート(サンプル / インポートした
+  // Result JSON)でも、レポート内の意見・コメント・座標からプロジェクトを復元して開く。
+  const openRecluster = async () => {
+    setExportError(null);
+    setOpeningRecluster(true);
+    try {
+      const projectId = await ensureInteractiveProject(reportId, report.title, report.result, settings);
+      navigate(`/interactive/${projectId}`);
+    } catch (e) {
+      setExportError(`クラスタリング再実行の準備に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setOpeningRecluster(false);
     }
   };
 
@@ -182,9 +202,18 @@ export function ViewerPage({ reportId }: { reportId: string }) {
         <button type="button" onClick={exportPowerPoint} disabled={exportingPptx}>
           {exportingPptx ? "生成中..." : "PowerPoint"}
         </button>
-        {project && (
-          <button type="button" onClick={() => navigate(`/interactive/${project.id}`)}>
-            クラスタリングを再実行
+        {reclusterable && (
+          <button
+            type="button"
+            onClick={openRecluster}
+            disabled={openingRecluster}
+            title={
+              project
+                ? "ベクトル化済みデータでクラスタ数を対話調整して作り直す"
+                : "このレポートの意見と座標からプロジェクトを復元し、クラスタ数を対話調整して作り直す"
+            }
+          >
+            {openingRecluster ? "準備中..." : "クラスタリングを再実行"}
           </button>
         )}
       </div>
