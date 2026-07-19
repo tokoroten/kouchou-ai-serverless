@@ -14,21 +14,52 @@ export function isLocalEmbedding(endpoint: EndpointConfig): boolean {
 // biome-ignore lint/suspicious/noExplicitAny: transformers.js の pipeline は動的型
 let cachedPipeline: { model: string; pipe: any } | null = null;
 
+/**
+ * WebGPU が実際に使えるか。`navigator.gpu` の有無だけでは足りない —
+ * ヘッドレスや GPU がブロックリストのブラウザでは API はあるのにアダプタが取れず、
+ * device: "webgpu" で「no available backend found」になる。必ずアダプタまで確認する。
+ */
+async function canUseWebGpu(): Promise<boolean> {
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: navigator.gpu は lib.dom に無い環境がある
+    const gpu = (globalThis.navigator as any)?.gpu;
+    if (!gpu?.requestAdapter) return false;
+    return !!(await gpu.requestAdapter());
+  } catch {
+    return false;
+  }
+}
+
 async function getPipeline(model: string, onStatus?: (message: string) => void) {
   if (cachedPipeline?.model === model) return cachedPipeline.pipe;
   const { pipeline } = await import("@huggingface/transformers");
-  const hasWebGpu = typeof navigator !== "undefined" && "gpu" in navigator;
-  onStatus?.(hasWebGpu ? "モデル読み込み中 (WebGPU)..." : "モデル読み込み中 (WASM: WebGPU 非対応環境)...");
-  const pipe = await pipeline("feature-extraction", model, {
-    device: hasWebGpu ? "webgpu" : "wasm",
-    dtype: hasWebGpu ? "fp32" : "q8",
-    // biome-ignore lint/suspicious/noExplicitAny: 進捗コールバックの型が公開されていない
-    progress_callback: (progress: any) => {
-      if (progress.status === "progress" && progress.file) {
-        onStatus?.(`モデルダウンロード中: ${progress.file} ${Math.round(progress.progress ?? 0)}%`);
-      }
-    },
-  });
+  // biome-ignore lint/suspicious/noExplicitAny: 進捗コールバックの型が公開されていない
+  const progress_callback = (progress: any) => {
+    if (progress.status === "progress" && progress.file) {
+      onStatus?.(`モデルダウンロード中: ${progress.file} ${Math.round(progress.progress ?? 0)}%`);
+    }
+  };
+  const load = (device: "webgpu" | "wasm") =>
+    pipeline("feature-extraction", model, {
+      device,
+      dtype: device === "webgpu" ? "fp32" : "q8",
+      progress_callback,
+    });
+
+  let pipe: Awaited<ReturnType<typeof load>>;
+  if (await canUseWebGpu()) {
+    onStatus?.("モデル読み込み中 (WebGPU)...");
+    try {
+      pipe = await load("webgpu");
+    } catch (e) {
+      // アダプタは取れても実際の初期化で落ちることがある。処理を止めず WASM へ落とす
+      onStatus?.(`WebGPU の初期化に失敗したため WASM で再試行します (${e instanceof Error ? e.message : String(e)})`);
+      pipe = await load("wasm");
+    }
+  } else {
+    onStatus?.("モデル読み込み中 (WASM: WebGPU 非対応環境)...");
+    pipe = await load("wasm");
+  }
   cachedPipeline = { model, pipe };
   return pipe;
 }
@@ -60,8 +91,10 @@ export async function benchmarkLocalEmbedding(
     "これはローカル埋め込みの速度計測用のサンプル文です。実データに近い長さの日本語テキストを想定しています。";
   let backend: EmbeddingBackend = "unknown";
   const captureBackend = (message: string) => {
-    if (/WebGPU/i.test(message)) backend = "webgpu";
-    else if (/WASM/i.test(message)) backend = "wasm";
+    // WASM 側のメッセージは「WASM: WebGPU 非対応環境」のように両方の語を含むため、
+    // WASM を先に判定する(WebGPU を先に見ると WASM 実行を取り違える)。
+    if (/WASM/i.test(message)) backend = "wasm";
+    else if (/WebGPU/i.test(message)) backend = "webgpu";
     onStatus?.(message);
   };
 
@@ -76,9 +109,9 @@ export async function benchmarkLocalEmbedding(
   const vectors = await embedLocallyViaWorker(texts, model, () => {}, signal);
   const totalMs = Date.now() - start;
 
-  // ロード済みで status が出なかった場合は navigator から推定
+  // ロード済みで status が出なかった場合はアダプタの取得可否から推定
   if (backend === "unknown") {
-    backend = typeof navigator !== "undefined" && "gpu" in navigator ? "webgpu" : "wasm";
+    backend = (await canUseWebGpu()) ? "webgpu" : "wasm";
   }
   return {
     backend,

@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { exportPreprocessed } from "../lib/export";
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_BASE_URL } from "../lib/llm/localEmbedding";
 import { clusterXY } from "../lib/pipeline/clusteringCore";
 import { buildClusterTable } from "../lib/pipeline/clusterTable";
 import { memoryCheckpoints, type PipelineContext } from "../lib/pipeline/context";
@@ -14,6 +15,7 @@ import { navigate } from "../lib/router";
 import { dexieCheckpoints, dexieStepStore } from "../lib/storage/checkpoints";
 import { db } from "../lib/storage/db";
 import type { ClusteringResult, EmbeddingResult, ExtractionResult } from "../types/project";
+import { type EndpointConfig, PRESETS } from "../types/settings";
 import {
   toUmapInput as toUmapInputShared,
   UMAP_UI_DEFAULTS,
@@ -31,6 +33,11 @@ import { convexHull } from "./viewer/ScatterChart";
 //   同一構成の再ラベリングは無料
 
 type Coords = { x: Float32Array; y: Float32Array };
+
+// ブラウザ内埋め込みのモデル候補(設定画面と同じリストを流用する)
+const LOCAL_EMBEDDING_MODELS = PRESETS.find((p) => p.id === "local-embedding")?.knownEmbeddingModels ?? [
+  { id: DEFAULT_LOCAL_EMBEDDING_MODEL },
+];
 
 export function InteractivePage({ projectId }: { projectId: string }) {
   const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
@@ -54,6 +61,14 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const [labelsPreview, setLabelsPreview] = useState<{ id: string; label: string; value: number }[] | null>(null);
   const [labelling, setLabelling] = useState(false);
   const [preprocessing, setPreprocessing] = useState(false);
+  // ベクトル化の実行先。未選択(null)なら、埋め込み API が設定済みならそちら、
+  // 未設定ならブラウザ内(transformers.js: API キー不要・無料)を既定にする。
+  const [embedBackendChoice, setEmbedBackend] = useState<"local" | "api" | null>(null);
+  const [localModel, setLocalModel] = useState(DEFAULT_LOCAL_EMBEDDING_MODEL);
+  const apiEmbeddingConfigured = !!(
+    project?.settingsSnapshot.embedding.baseUrl && project?.settingsSnapshot.embedding.model
+  );
+  const embedBackend = embedBackendChoice ?? (apiEmbeddingConfigured ? "api" : "local");
   // 階層の見せ方: 第1階層 = 凸包(なわばり)、第2階層 = 点の色。
   // 粗い括りと細かい括りを1枚の散布図で同時に読めるようにする。
   const [showHull, setShowHull] = useState(true);
@@ -122,12 +137,12 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   }, [coords, preprocessed?.emb, preprocessed?.saved]);
 
   const buildCtx = useCallback(
-    (persistent: boolean): PipelineContext | null => {
+    (persistent: boolean, overrides?: { embedding?: EndpointConfig }): PipelineContext | null => {
       if (!project) return null;
       abortRef.current = new AbortController();
       return {
         chat: project.settingsSnapshot.chat,
-        embedding: project.settingsSnapshot.embedding,
+        embedding: overrides?.embedding ?? project.settingsSnapshot.embedding,
         concurrency: project.settingsSnapshot.concurrency,
         signal: abortRef.current.signal,
         checkpoints: persistent ? dexieCheckpoints(projectId) : memoryCheckpoints(),
@@ -148,9 +163,16 @@ export function InteractivePage({ projectId }: { projectId: string }) {
 
   // 前処理(意見抽出+ベクトル化)を単独実行できるようにする。
   // 意見抽出済み(レポートから復元したプロジェクト)なら、ベクトル化だけを実行する。
+  // 埋め込み先はここで選べる — ブラウザ内(transformers.js)なら API キー不要・無料で、
+  // レポートしか手元に無い状態からでも UMAP をやり直せる。
   const runPreprocess = async () => {
-    const ctx = buildCtx(true);
-    if (!project || !ctx) return;
+    if (!project) return;
+    const endpoint: EndpointConfig =
+      embedBackend === "local"
+        ? { baseUrl: LOCAL_EMBEDDING_BASE_URL, apiKey: "", model: localModel }
+        : project.settingsSnapshot.embedding;
+    const ctx = buildCtx(true, { embedding: endpoint });
+    if (!ctx) return;
     setError(null);
     setPreprocessing(true);
     try {
@@ -163,9 +185,15 @@ export function InteractivePage({ projectId }: { projectId: string }) {
       setStatus("ベクトル化中...");
       const emb = await embeddingStep(ext.args, ctx);
       await dexieStepStore(projectId).put("embedding", emb);
-      setStatus("前処理完了 — 「UMAP 実行」でレイアウトを作り直せます");
+      // 実際に使った埋め込み先をプロジェクトに残す(レポートの config に出るため)
+      await db.projects.update(projectId, {
+        settingsSnapshot: { ...project.settingsSnapshot, embedding: endpoint },
+      });
+      setStatus("ベクトル化完了 — 「UMAP 実行」でレイアウトを作り直せます");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // 中断(AbortError)はユーザ操作なのでエラー表示しない
+      if (e instanceof DOMException && e.name === "AbortError") setStatus("ベクトル化を中断しました");
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPreprocessing(false);
     }
@@ -378,6 +406,40 @@ export function InteractivePage({ projectId }: { projectId: string }) {
   const hasPreprocess = !!(preprocessed?.ext && (preprocessed?.emb || preprocessed?.saved));
   const argCount = preprocessed?.emb?.argIds.length ?? preprocessed?.saved?.argIds.length ?? 0;
 
+  // ベクトル化の実行先の選択(前処理カード / ベクトル化カードで共用)
+  const embedBackendPicker = (
+    <>
+      <label style={{ margin: 0 }}>
+        ベクトル化の実行先
+        <select
+          value={embedBackend}
+          onChange={(e) => setEmbedBackend(e.target.value as "local" | "api")}
+          disabled={preprocessing}
+        >
+          <option value="local">ブラウザ内(無料・WebGPU / WASM)</option>
+          <option value="api" disabled={!apiEmbeddingConfigured}>
+            {apiEmbeddingConfigured
+              ? `埋め込み API(${project.settingsSnapshot.embedding.model})`
+              : "埋め込み API(設定画面で未設定)"}
+          </option>
+        </select>
+      </label>
+      {embedBackend === "local" && (
+        <label style={{ margin: 0 }}>
+          モデル
+          <select value={localModel} onChange={(e) => setLocalModel(e.target.value)} disabled={preprocessing}>
+            {LOCAL_EMBEDDING_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id}
+                {m.price ? ` — ${m.price}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </>
+  );
+
   return (
     <div>
       <h1>{project.title} — クラスタリング再実行</h1>
@@ -391,9 +453,13 @@ export function InteractivePage({ projectId }: { projectId: string }) {
       {!hasPreprocess && (
         <div className="card">
           <p>前処理済みデータがまだありません。ここで前処理だけを実行できます(LLM 呼び出しが発生します)。</p>
-          <button type="button" className="primary" onClick={runPreprocess} disabled={preprocessing}>
-            {preprocessing ? "前処理中..." : "前処理を実行(意見抽出+ベクトル化)"}
-          </button>
+          <div className="row" style={{ alignItems: "center" }}>
+            {embedBackendPicker}
+            <button type="button" className="primary" onClick={runPreprocess} disabled={preprocessing}>
+              {preprocessing ? "前処理中..." : "前処理を実行(意見抽出+ベクトル化)"}
+            </button>
+            <span className="note">{status}</span>
+          </div>
         </div>
       )}
 
@@ -402,17 +468,34 @@ export function InteractivePage({ projectId }: { projectId: string }) {
           <p className="note" style={{ margin: 0 }}>
             このプロジェクトはレポートから復元したため、埋め込みベクトルを持っていません。
             <b>レポートに保存されていた散布図座標</b>を使い、クラスタ数の切り直しと再ラベリングができます。
-            レイアウト自体(UMAP)をやり直すにはベクトル化が必要です(埋め込み API の課金が発生します)。
+            レイアウト自体(UMAP)をやり直すには、下でベクトル化してください —
+            <b>ブラウザ内(transformers.js)なら API キー不要・無料・データ送信なし</b>です。
           </p>
-          <button
-            type="button"
-            style={{ marginTop: 8 }}
-            onClick={runPreprocess}
-            disabled={preprocessing}
-            title={`${argCount.toLocaleString()} 件の意見をベクトル化します(意見抽出は再実行しません)`}
-          >
-            {preprocessing ? "ベクトル化中..." : "ベクトル化を実行(UMAP をやり直す場合)"}
-          </button>
+          <div className="row" style={{ marginTop: 8, alignItems: "center" }}>
+            {embedBackendPicker}
+            {preprocessing ? (
+              <button type="button" onClick={() => abortRef.current?.abort()}>
+                ベクトル化を中断
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                onClick={runPreprocess}
+                title={`${argCount.toLocaleString()} 件の意見をベクトル化します(意見抽出は再実行しません)`}
+              >
+                ベクトル化を実行({argCount.toLocaleString()} 件)
+              </button>
+            )}
+            <span className="note">{status}</span>
+          </div>
+          {embedBackend === "local" && (
+            <p className="note" style={{ marginTop: 8, marginBottom: 0 }}>
+              初回はモデル(数百MB)がブラウザにダウンロードされ、以降はキャッシュされます。 WebGPU 非対応の環境では WASM
+              で動くため、件数が多いとかなり時間がかかります。
+              中断してもバッチ単位で保存されるので、やり直すと続きから再開します。
+            </p>
+          )}
         </div>
       )}
 
