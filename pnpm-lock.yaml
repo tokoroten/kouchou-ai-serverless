@@ -30,8 +30,8 @@ importers:
         specifier: ^2.0.2
         version: 2.0.2(graphology-types@0.24.8)
       ml-hclust:
-        specifier: ^3.1.0
-        version: 3.1.0
+        specifier: ^4.0.0
+        version: 4.0.0
       ml-kmeans:
         specifier: ^7.0.1
         version: 7.0.1
@@ -1375,17 +1375,14 @@ packages:
   ml-array-rescale@2.0.0:
     resolution: {integrity: sha512-2GGtKfSno94/kIloWGvpp/U5Q5vLvLrza+SAaGsLeo6Xj4mEbA6Gqx+oTfZFkxnd1grT2X007HfJNs3T5BsiVg==}
 
-  ml-distance-euclidean@2.0.0:
-    resolution: {integrity: sha512-yC9/2o8QF0A3m/0IXqCTXCzz2pNEzvmcE/9HFKOZGnTjatvBbsn4lWYJkxENkA4Ug2fnYl7PXQxnPi21sgMy/Q==}
-
   ml-distance-euclidean@3.0.1:
     resolution: {integrity: sha512-jEEu/1a73ArPmIiwOzrcah6TfhtV19dCKnnM7JvdR2xTzyVJFGgIIR78Vg8Pl9z2NVeSRoFOpzc0910sPMINsA==}
 
   ml-distance-matrix@2.0.1:
     resolution: {integrity: sha512-6wt3bvK8WzAjyuBt9+wnyGanphrAZyqJGwiEEfuknfu8IQBtHYWpyLhjtQ8R7rjiPyXlF9eP7GcI5L7OA1NLEQ==}
 
-  ml-hclust@3.1.0:
-    resolution: {integrity: sha512-EI6VCHrPHOsPsgZ1a/auhdxzHpEZ+kV7yjCGGIU+EWtb/XV1ZWSg5GlU32Qt4T05m98wCSQykPBhIg5aW6JjuQ==}
+  ml-hclust@4.0.0:
+    resolution: {integrity: sha512-4zSxWo72P9aWsxXwuKJGMIerPkLIqkbGj88ozPYc1jJZ3xsEYriZBA4hNI7mEyGQKBw8LwCf4TNIxP1fkG1ZiQ==}
 
   ml-kmeans@7.0.1:
     resolution: {integrity: sha512-yrBTntVdMf9gdMQnHBY1HQ5IhFdTAW8hcUhagiktqmx3lwR8VC2ONyP9oJfaVzMkummOd/XKgT64E2DgJlmfrQ==}
@@ -2811,16 +2808,14 @@ snapshots:
       ml-array-max: 2.0.0
       ml-array-min: 2.0.0
 
-  ml-distance-euclidean@2.0.0: {}
-
   ml-distance-euclidean@3.0.1: {}
 
   ml-distance-matrix@2.0.1: {}
 
-  ml-hclust@3.1.0:
+  ml-hclust@4.0.0:
     dependencies:
       heap: 0.2.7
-      ml-distance-euclidean: 2.0.0
+      ml-distance-euclidean: 3.0.1
       ml-distance-matrix: 2.0.1
       ml-matrix: 6.14.0
 
