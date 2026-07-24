@@ -20,7 +20,7 @@
     "dexie-react-hooks": "^4.4.0",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
-    "ml-hclust": "^3.1.0",
+    "ml-hclust": "^4.0.0",
     "ml-kmeans": "^7.0.1",
     "papaparse": "^5.5.3",
     "plotly.js-dist-min": "^3.0.1",
