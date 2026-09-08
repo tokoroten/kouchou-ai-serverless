@@ -43,7 +43,12 @@ export async function extraction(
       semaphore.run(async () => {
         throwIfAborted(ctx.signal);
         const cached = await ctx.checkpoints.getExtraction(comment.commentId);
-        if (cached !== undefined) {
+        // 旧版は失敗も [] にしていたため、正常0件の診断がない空キャッシュは再抽出する。
+        const emptyDiagnostic =
+          cached?.length === 0
+            ? await ctx.checkpoints.getChunk("extraction-diagnostics", comment.commentId)
+            : undefined;
+        if (cached !== undefined && (cached.length > 0 || emptyDiagnostic?.status === "empty")) {
           perComment[index] = cached;
         } else {
           try {

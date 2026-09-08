@@ -11,3 +11,5 @@ Plotlyの日本語折り返しは、結合文字を分けず、開き括弧の�
 抽出プロンプトの比較手順は本体の `docs/development/extraction-prompts.md`、JSONの任意の参照整合性検査は `analysis_core.validate_output` を参照する。単一HTMLはfile://で開けるが、本体の静的出力一式はHTTP配信が必要であり、配布形式を混同しない。
 
 回帰確認: `pnpm exec playwright install chromium`、`pnpm build`、`pnpm dev --port 5174` の後、別端末で `node scripts/viewer-states-e2e.ts` を実行する（Node 24）。APIキーは不要で、状態切替・スマホ・リサイズ・ビルド済み単一HTMLのfile://表示を確認する。
+
+旧版の空キャッシュは失敗と区別できないため、正常0件の診断がない場合は再抽出する。新しい正常0件の結果は再利用する。

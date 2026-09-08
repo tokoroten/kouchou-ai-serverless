@@ -142,3 +142,15 @@ it("一部失敗でも完成扱いせず、再試行は成功済み入力を再�
   expect(retry).toHaveBeenCalledTimes(1);
   expect(await ctx.checkpoints.getChunk("extraction-diagnostics", "b")).toEqual({ commentId: "b", status: "ok" });
 });
+
+it("旧版の空キャッシュは再抽出し、正常0件の確認後は再利用する", async () => {
+  const ctx = makeCtx();
+  await ctx.checkpoints.putExtraction("old", []);
+  const fetch = mockChatFetch(() => []);
+  vi.stubGlobal("fetch", fetch);
+  const rows = [{ commentId: "old", body: "old input", attributes: {} }];
+  await expect(extraction(rows, "p", ctx)).rejects.toThrow("1件も");
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await expect(extraction(rows, "p", ctx)).rejects.toThrow("1件も");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
