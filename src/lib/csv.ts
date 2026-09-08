@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 import type { CommentRow } from "../types/project";
+import { validateCsvResult } from "./validateCsvResult";
 
 export type CsvPreview = {
   columns: string[];
@@ -18,6 +19,12 @@ export function parseCsvFile(file: File, encoding: "UTF-8" | "Shift_JIS" = "UTF-
       skipEmptyLines: true,
       encoding: encoding === "Shift_JIS" ? "Shift_JIS" : "UTF-8",
       complete: (results) => {
+        try {
+          validateCsvResult(results);
+        } catch (error) {
+          reject(error);
+          return;
+        }
         const columns = results.meta.fields ?? [];
         resolve({
           columns,
