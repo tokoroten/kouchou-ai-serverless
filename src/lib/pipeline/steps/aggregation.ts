@@ -254,8 +254,11 @@ export function aggregation(input: AggregationInput): Result {
   };
 }
 
-/** 本家サンプルは数値の comment_id を使うため、数値化できるならする */
+/** 本家サンプルの数値 ID は維持し、元コメントのキーを変える変換は避ける。 */
 function toCommentIdValue(commentId: string): number | string {
-  if (/^\d+$/.test(commentId)) return Number(commentId);
+  const numericId = Number(commentId);
+  if (/^\d+$/.test(commentId) && Number.isSafeInteger(numericId) && String(numericId) === commentId) {
+    return numericId;
+  }
   return commentId;
 }
