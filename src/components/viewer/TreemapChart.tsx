@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Argument, Cluster } from "../../types/result";
 import { TREEMAP_COLORWAY } from "./colors";
 import { Plot } from "./Plot";
+import { wrapJapaneseText } from "./wrapJapaneseText";
 
 // 本家 public-viewer TreemapChart の移植(簡略版)。
 // クラスタ階層 + 意見(リーフ)を treemap 表示し、クリックでズームする。
@@ -54,11 +55,11 @@ export function TreemapChart({ clusterList, argumentList, level, onTreeZoom, fil
       type: "treemap",
       ids: list.map((node) => node.id),
       labels: list.map((node) =>
-        node.id === level ? node.label.replace(/(.{50})/g, "$1<br />") : node.label.replace(/(.{15})/g, "$1<br />"),
+        node.id === level ? wrapJapaneseText(node.label, 50) : wrapJapaneseText(node.label, 15),
       ),
       parents: list.map((node) => node.parent),
       values: list.map((node) => node.value),
-      customdata: list.map((node) => (node.filtered ? "" : node.takeaway.replace(/(.{15})/g, "$1<br />"))),
+      customdata: list.map((node) => (node.filtered ? "" : wrapJapaneseText(node.takeaway, 15))),
       level,
       branchvalues: "total",
       marker: {

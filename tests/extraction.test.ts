@@ -85,3 +85,60 @@ describe("extraction", () => {
     expect(total).toBe(30);
   });
 });
+
+it("正常な0件を診断に残し、失敗はキャッシュしない", async () => {
+  const ctx = makeCtx();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const input = body.messages.at(-1).content;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: input === "empty" ? '{"extractedOpinionList":[]}' : "broken JSON" } }],
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  await expect(extraction([{ commentId: "e", body: "empty", attributes: {} }], "p", ctx)).rejects.toThrow("1件も");
+  expect(await ctx.checkpoints.getChunk("extraction-diagnostics", "e")).toMatchObject({
+    status: "empty",
+    comment: "empty",
+  });
+  await expect(extraction([{ commentId: "f", body: "private input", attributes: {} }], "p", ctx)).rejects.toThrow(
+    "回答ID f",
+  );
+  expect(await ctx.checkpoints.getExtraction("f")).toBeUndefined();
+  expect(await ctx.checkpoints.getChunk("extraction-diagnostics", "f")).toMatchObject({
+    status: "error",
+    comment: "private input",
+  });
+});
+
+it("一部失敗でも完成扱いせず、再試行は成功済み入力を再送しない", async () => {
+  const ctx = makeCtx();
+  const rows = [
+    { commentId: "a", body: "a", attributes: {} },
+    { commentId: "b", body: "b", attributes: {} },
+  ];
+  const bad = vi.fn(async (_url, init) => {
+    const input = JSON.parse(String(init?.body)).messages.at(-1).content;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          { message: { content: input === "a" ? '{"extractedOpinionList":["ok"]}' : '{"extractedOpinionList":[42]}' } },
+        ],
+      }),
+    );
+  });
+  vi.stubGlobal("fetch", bad);
+  await expect(extraction(rows, "p", ctx)).rejects.toThrow("回答ID b");
+  expect(await ctx.checkpoints.getExtraction("a")).toEqual(["ok"]);
+  expect(await ctx.checkpoints.getExtraction("b")).toBeUndefined();
+  const retry = mockChatFetch(() => ["recovered"]);
+  vi.stubGlobal("fetch", retry);
+  expect((await extraction(rows, "p", ctx)).args).toHaveLength(2);
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(await ctx.checkpoints.getChunk("extraction-diagnostics", "b")).toEqual({ commentId: "b", status: "ok" });
+});
