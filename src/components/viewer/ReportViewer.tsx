@@ -11,6 +11,7 @@ import { HierarchyList } from "./HierarchyList";
 import { ReadingGuide } from "./ReadingGuide";
 import { ScatterChart } from "./ScatterChart";
 import { TreemapChart } from "./TreemapChart";
+import { TreemapDetails } from "./TreemapDetails";
 
 // レポートビューア本体(本家 public-viewer 相当)。
 // アプリ内(ViewerPage)と単一HTMLレポート(viewer-standalone)の両方から使う。
@@ -142,7 +143,7 @@ export function ReportViewer({ result }: Props) {
         )}
 
         {tab !== "hierarchy" ? (
-          <div className="viewer-primary">
+          <div className="viewer-primary" id="report-chart">
             <div className="viewer-chart">
               {tab === "scatter" && (
                 <ScatterChart
@@ -188,27 +189,53 @@ export function ReportViewer({ result }: Props) {
 
         {tab !== "hierarchy" && (
           <div className="viewer-side">
-            <section className="viewer-clusters">
-              <h2>意見グループ一覧</h2>
-              <div className="cluster-grid">
-                {clustersAtLevel.map((cluster) => (
-                  <button
-                    type="button"
-                    key={cluster.id}
-                    className={`cluster-card ${selectedClusterId === cluster.id ? "selected" : ""}`}
-                    onClick={() => setSelectedClusterId(cluster.id === selectedClusterId ? null : cluster.id)}
-                  >
-                    <h3>{cluster.label}</h3>
-                    <p className="cluster-value">
-                      {filteredCountByCluster
-                        ? `${(filteredCountByCluster.get(cluster.id) ?? 0).toLocaleString()} / ${cluster.value.toLocaleString()} 件 (フィルタ後)`
-                        : `${cluster.value.toLocaleString()} 件`}
-                    </p>
-                    <p className="cluster-takeaway">{cluster.takeaway}</p>
-                  </button>
-                ))}
-              </div>
-            </section>
+            {tab === "treemap" ? (
+              <TreemapDetails
+                clusters={result.clusters}
+                arguments={result.arguments}
+                level={treemapLevel}
+                filteredIds={filteredIds}
+                onNavigate={(id) => {
+                  setTreemapLevel(id);
+                  document.getElementById("report-chart")?.scrollIntoView();
+                }}
+              />
+            ) : (
+              <section className="viewer-clusters">
+                <h2>意見グループ一覧</h2>
+                <div className="cluster-grid">
+                  {clustersAtLevel.map((cluster) => (
+                    <div key={cluster.id}>
+                      <button
+                        type="button"
+                        className={`cluster-card ${selectedClusterId === cluster.id ? "selected" : ""}`}
+                        style={{ width: "100%" }}
+                        onClick={() => setSelectedClusterId(cluster.id === selectedClusterId ? null : cluster.id)}
+                      >
+                        <h3>{cluster.label}</h3>
+                        <p className="cluster-value">
+                          {filteredCountByCluster
+                            ? `${(filteredCountByCluster.get(cluster.id) ?? 0).toLocaleString()} / ${cluster.value.toLocaleString()} 件 (フィルタ後)`
+                            : `${cluster.value.toLocaleString()} 件`}
+                        </p>
+                        <p className="cluster-takeaway">{cluster.takeaway}</p>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`${cluster.label}を階層図で見る`}
+                        onClick={() => {
+                          setTreemapLevel(cluster.id);
+                          setTab("treemap");
+                          document.getElementById("report-chart")?.scrollIntoView();
+                        }}
+                      >
+                        階層図で見る
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>

@@ -11,12 +11,15 @@ type Props = {
   layout: Record<string, unknown>;
   config?: Record<string, unknown>;
   style?: React.CSSProperties;
+  onTreemapClick?: (event: { nextLevel?: string }) => boolean;
   onClick?: (event: PlotlyData) => void;
   onHover?: (event: PlotlyData) => void;
 };
 
-export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
+export function Plot({ data, layout, config, style, onClick, onHover, onTreemapClick }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const onTreemapClickRef = useRef(onTreemapClick);
+  onTreemapClickRef.current = onTreemapClick;
   const onClickRef = useRef(onClick);
   const onHoverRef = useRef(onHover);
   onClickRef.current = onClick;
@@ -37,6 +40,8 @@ export function Plot({ data, layout, config, style, onClick, onHover }: Props) {
       if (unmountedRef.current) return;
       // biome-ignore lint/suspicious/noExplicitAny: Plotly が拡張した HTMLElement
       const gd = el as any;
+      gd.removeAllListeners?.("plotly_treemapclick");
+      gd.on?.("plotly_treemapclick", (event: { nextLevel?: string }) => onTreemapClickRef.current?.(event));
       gd.removeAllListeners?.("plotly_click");
       gd.removeAllListeners?.("plotly_hover");
       gd.on?.("plotly_click", (event: PlotlyData) => onClickRef.current?.(event));

@@ -70,8 +70,8 @@ export function TreemapChart({ clusterList, argumentList, level, onTreeZoom, fil
       hovertemplate: "%{customdata}<extra></extra>",
       hoverlabel: { align: "left" },
       texttemplate: isFiltering
-        ? "%{label}<br>%{value:,}件 (フィルタ後)<br>%{percentEntry:.2%}"
-        : "%{label}<br>%{value:,}件<br>%{percentEntry:.2%}",
+        ? "%{label}<br>%{value:,}件 (フィルタ後)<br>全意見の %{percentRoot:.2%}"
+        : "%{label}<br>%{value:,}件<br>全意見の %{percentRoot:.2%}",
       maxdepth: 2,
       pathbar: { thickness: 28 },
     };
@@ -90,11 +90,9 @@ export function TreemapChart({ clusterList, argumentList, level, onTreeZoom, fil
       data={[data]}
       layout={layout}
       config={{ displayModeBar: false, locale: "ja" }}
-      // biome-ignore lint/suspicious/noExplicitAny: Plotly event
-      onClick={(event: any) => {
-        const point = event?.points?.[0];
-        const newLevel = point?.data?.ids?.[point.pointNumber]?.toString() || "0";
-        onTreeZoom(newLevel);
+      onTreemapClick={(event) => {
+        if (event.nextLevel !== undefined) onTreeZoom(event.nextLevel);
+        return false;
       }}
     />
   );
