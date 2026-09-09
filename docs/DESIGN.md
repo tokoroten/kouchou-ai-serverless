@@ -169,6 +169,9 @@ Structured Outputs を使う(`../kouchou-ai/packages/analysis-core/src/analysis_
 - `clusters[]`: `level`(ルート=0), `id`, `label`, `takeaway`, `value`(所属件数),
   `parent`(ルートは空文字), `density_rank_percentile`
 - `comments`: `{ [comment_id]: { comment } }`
+  - `String(arguments[i].comment_id)` は元コメントのキーを保持する。通常の非負整数 ID は
+    数値として出力してよいが、先頭ゼロ付き ID や JavaScript の安全な整数範囲を超える ID は
+    文字列のまま保存する。数値化による別コメントへの誤参照・桁落ちを避ける。
 - `overview`: 全体要約文字列
 - `config`: 使用モデル・プロンプト等(本家の `Config` 型に概ね準拠。埋められない項目は空文字でよい)
 - `comment_num`, `propertyMap`(属性列があれば), `translations`(`{}` でよい)

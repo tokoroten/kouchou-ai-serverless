@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { normalizeComments } from "../src/lib/csv";
+import { parseResultJson } from "../src/lib/export";
 import { buildClusterTable } from "../src/lib/pipeline/clusterTable";
 import {
   aggregation,
@@ -6,7 +8,9 @@ import {
   calculateDensity,
   meltClusters,
 } from "../src/lib/pipeline/steps/aggregation";
+import { projectFromResult } from "../src/lib/reportProject";
 import type { ClusteringResult, ExtractedArgument, LabellingResult } from "../src/types/project";
+import { DEFAULT_SETTINGS } from "../src/types/settings";
 
 // cluster_ids 組み立て・親子関係・密度パーセンタイル・Result スキーマの検証(DESIGN §9-5)
 
@@ -146,5 +150,57 @@ describe("aggregation", () => {
     expect(result.overview).toBe("全体概要");
     expect(result.config.question).toBe("Q");
     expect(result.translations).toEqual({});
+  });
+});
+
+describe("コメント参照の持ち出し", () => {
+  it.each([
+    ["001", "1", "9007199254740992", "9007199254740993"],
+    ["0", "9007199254740991", "回答-A", "9".repeat(400)],
+  ])("CSV の ID を JSON 保存・読込・プロジェクト復元後も区別する: %j", (...commentIds) => {
+    const { table, labels, args } = fixtures();
+    const comments = normalizeComments(
+      commentIds.map((id, i) => ({ "comment-id": id, "comment-body": `元コメント${i}`, age: `属性${i}` })),
+      "comment-body",
+      "comment-id",
+      ["age"],
+    );
+    const result = aggregation({
+      project: {
+        title: "参照保持",
+        question: "Q",
+        intro: "I",
+        attributeColumns: ["age"],
+        clusterNums: [2, 4],
+        samplingNum: 30,
+        prompts: { extraction: "e", initialLabelling: "i", mergeLabelling: "m", overview: "o" },
+      },
+      comments,
+      extractionResult: {
+        args,
+        relations: args.map((arg, i) => ({ argId: arg.argId, commentId: commentIds[i] })),
+      },
+      table,
+      labels,
+      overviewText: "概要",
+      chatModel: "test",
+      embeddingModel: "test",
+      workers: 1,
+    });
+    const imported = parseResultJson(JSON.stringify(result));
+    for (const [i, arg] of imported.arguments.entries()) {
+      expect(String(arg.comment_id)).toBe(commentIds[i]);
+      expect(imported.comments[String(arg.comment_id)]?.comment).toBe(`元コメント${i}`);
+    }
+    const restored = projectFromResult(imported, {
+      id: "restored",
+      reportId: "report",
+      title: "復元",
+      settings: DEFAULT_SETTINGS,
+    });
+    expect(restored.extraction.relations.map((r) => r.commentId)).toEqual(commentIds);
+    for (const [i, id] of commentIds.entries()) {
+      expect(restored.project.comments.find((c) => c.commentId === id)?.attributes.age).toBe(`属性${i}`);
+    }
   });
 });
