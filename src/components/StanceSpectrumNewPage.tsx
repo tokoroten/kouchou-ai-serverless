@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { type CsvPreview, detectBodyColumn, normalizeComments, parseCsvFile } from "../lib/csv";
 import { navigate } from "../lib/router";
 import { db, requestPersistentStorage } from "../lib/storage/db";
@@ -19,6 +19,7 @@ export function StanceSpectrumNewPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const loadVersion = useRef(0);
   const [preview, setPreview] = useState<CsvPreview | null>(null);
   const [encoding, setEncoding] = useState<"UTF-8" | "Shift_JIS">("UTF-8");
   const [fileName, setFileName] = useState("");
@@ -42,9 +43,14 @@ export function StanceSpectrumNewPage() {
   const settingsMissing = pipelineReadiness(settings).blocked;
 
   const loadFile = async (f: File, enc: "UTF-8" | "Shift_JIS") => {
+    const version = ++loadVersion.current;
     setError(null);
+    setPreview(null);
+    setFile(f);
+    setFileName(f.name);
     try {
       const p = await parseCsvFile(f, enc);
+      if (version !== loadVersion.current) return;
       setPreview(p);
       setFile(f);
       setFileName(f.name);
@@ -55,6 +61,7 @@ export function StanceSpectrumNewPage() {
       setAttributeColumns((prev) => prev.filter((c) => p.columns.includes(c)));
       if (!title) setTitle(f.name.replace(/\.csv$/i, ""));
     } catch (e) {
+      if (version !== loadVersion.current) return;
       setError(`CSV の読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     }
   };

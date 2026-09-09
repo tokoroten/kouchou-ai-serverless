@@ -155,6 +155,10 @@ Structured Outputs を使う(`../kouchou-ai/packages/analysis-core/src/analysis_
 - 必須: `comment-id`, `comment-body`
 - 任意: 属性列(自由)。UI で「属性として使う列」を選択させる。
 - 空・空白のみの `comment-body` は除外(本家 #583 と同じ)。
+- 引用符不整合・列数不一致・空/重複ヘッダー・データなしは、理由と修正方法を表示して拒否する。
+  正常な1列CSVで生じる区切り文字推定の警告は許容する。通常作成・賛否スペクトラム作成で共通に使い、
+  読み込み開始時に古いプレビューを破棄し、遅れて完了した古い読み込みは反映しない。
+  本家#97と同じ検証ケースを `tests/csv-parse.test.ts` に保持する。
 
 ### 5.2 出力: 本家互換 Result JSON
 

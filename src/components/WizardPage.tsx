@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { type CsvPreview, detectBodyColumn, normalizeComments, parseCsvFile } from "../lib/csv";
 import { estimateCost, estimateSlotCosts, type SlotCost } from "../lib/estimate";
 import { calculateRecommendedClusterNums } from "../lib/pipeline/clusterNums";
@@ -43,6 +43,7 @@ export function WizardPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Step1
+  const loadVersion = useRef(0);
   const [preview, setPreview] = useState<CsvPreview | null>(null);
   const [encoding, setEncoding] = useState<"UTF-8" | "Shift_JIS">("UTF-8");
   const [fileName, setFileName] = useState("");
@@ -108,9 +109,14 @@ export function WizardPage() {
   );
 
   const loadFile = async (f: File, enc: "UTF-8" | "Shift_JIS") => {
+    const version = ++loadVersion.current;
     setError(null);
+    setPreview(null);
+    setFile(f);
+    setFileName(f.name);
     try {
       const p = await parseCsvFile(f, enc);
+      if (version !== loadVersion.current) return;
       setPreview(p);
       setFile(f);
       setFileName(f.name);
@@ -123,6 +129,7 @@ export function WizardPage() {
       setAttributeColumns((prev) => prev.filter((c) => p.columns.includes(c)));
       if (!title) setTitle(f.name.replace(/\.csv$/i, ""));
     } catch (e) {
+      if (version !== loadVersion.current) return;
       setError(`CSV の読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
