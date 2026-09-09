@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Result } from "../../types/result";
 import {
   AttributeFilter,
@@ -27,6 +27,9 @@ type Props = {
 
 export function ReportViewer({ result }: Props) {
   const [tab, setTab] = useState<ChartTab>("scatter");
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 600px)").matches) setTab("hierarchy");
+  }, []);
   const [treemapLevel, setTreemapLevel] = useState("0");
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterParams>(EMPTY_FILTER);

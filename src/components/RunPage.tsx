@@ -22,6 +22,13 @@ const STEP_LABELS: Record<PipelineStepName, string> = {
 
 export function RunPage({ projectId }: { projectId: string }) {
   const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
+  const diagnostics = useLiveQuery(
+    async () =>
+      (await db.chunkCache.where("[projectId+step]").equals([projectId, "extraction-diagnostics"]).toArray()).filter(
+        (row) => row.data.status !== "ok",
+      ),
+    [projectId],
+  );
   const runner = useRunner();
   const isRunning = runner.runningProjectId === projectId;
   // ベクトル化(embedding)が済んでいるかどうか。済んでいない間は
@@ -54,6 +61,20 @@ export function RunPage({ projectId }: { projectId: string }) {
 
   return (
     <div>
+      {!!diagnostics?.length && (
+        <details className="card">
+          <summary>抽出できなかった入力（{diagnostics.length}件）</summary>
+          <p>原文を含む確認用情報です。公開レポートや単一HTMLには含まれません。</p>
+          {diagnostics.map((row) => (
+            <article key={row.key}>
+              <h3>回答ID: {row.data.commentId}</h3>
+              <p>{row.data.status === "empty" ? "正常応答・意見の抽出0件" : `抽出失敗: ${row.data.errorType}`}</p>
+              <p style={{ whiteSpace: "pre-wrap" }}>{row.data.comment}</p>
+            </article>
+          ))}
+        </details>
+      )}
+
       <h1>{project.title} — 実行</h1>
       <p className="note">
         コメント {project.comments.length.toLocaleString()} 件 / モデル: {project.settingsSnapshot.chat.model} +{" "}

@@ -1,4 +1,9 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
+
+const ViewerStates = import.meta.env.DEV
+  ? lazy(() => import("./components/dev/ViewerStates").then((m) => ({ default: m.ViewerStates })))
+  : null;
+
 import { HomePage } from "./components/HomePage";
 import { InteractivePage } from "./components/InteractivePage";
 import { RunPage } from "./components/RunPage";
@@ -26,7 +31,13 @@ export function App() {
   if (isLegacyRoute) return null;
 
   let page: React.ReactNode;
-  if (route === "/" || route === "") {
+  if (route === "/dev/viewer-states" && ViewerStates) {
+    page = (
+      <Suspense fallback={<p>読み込み中</p>}>
+        <ViewerStates />
+      </Suspense>
+    );
+  } else if (route === "/" || route === "") {
     page = <HomePage />;
   } else if (route === "/settings") {
     page = <SettingsPage />;

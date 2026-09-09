@@ -1,3 +1,4 @@
+import { wrapJapaneseText } from "./wrapJapaneseText";
 // 本家 public-viewer ScatterChart.tsx の softColors を移植。
 export const SOFT_COLORS = [
   "#7ac943",
@@ -78,7 +79,7 @@ export function wrapLabelText(text: string, fontSize = 14, maxWidth = 228): stri
   return result;
 }
 
-/** ホバーテキスト用: 30文字ごとに改行 */
+/** ホバーテキスト用: 禁則処理を考慮した改行 */
 export function wrapHoverText(text: string): string {
-  return text.replace(/(.{30})/g, "$1<br />");
+  return wrapJapaneseText(text);
 }
