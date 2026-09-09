@@ -8,6 +8,7 @@ import {
   filterArgumentIds,
 } from "./AttributeFilter";
 import { HierarchyList } from "./HierarchyList";
+import { ReadingGuide } from "./ReadingGuide";
 import { ScatterChart } from "./ScatterChart";
 import { TreemapChart } from "./TreemapChart";
 
@@ -72,6 +73,7 @@ export function ReportViewer({ result }: Props) {
         {result.config?.question && <p className="viewer-question">{result.config.question}</p>}
       </header>
 
+      <ReadingGuide />
       <nav className="viewer-tabs">
         <button type="button" className={tab === "scatter" ? "active" : ""} onClick={() => setTab("scatter")}>
           散布図
