@@ -101,6 +101,9 @@ label {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.filter-chip .note {
+  margin-left: 4px;
+}
 
 .error-box {
   background: #fef2f2;
@@ -395,9 +398,6 @@ table.preview-table {
 .filter-chip.checked {
   border-color: var(--primary);
   background: #eff6ff;
-}
-.filter-chip .note {
-  margin-left: 4px;
 }
 
 /* 階層リスト */

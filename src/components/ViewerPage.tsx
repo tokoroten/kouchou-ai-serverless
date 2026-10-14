@@ -10,6 +10,7 @@ import {
 import { generateAndSavePonchie } from "../lib/imageGen";
 import { canRecluster, ensureInteractiveProject } from "../lib/reportProject";
 import { navigate } from "../lib/router";
+import { importSampleReport, SAMPLE_REPORT_ID } from "../lib/sampleReport";
 import { db, deleteReportImage, getReportImage, type ReportImageRow } from "../lib/storage/db";
 import { useSettings } from "../store/settings";
 import { estimateActualCostUsd, isProviderConfigured, PRESETS, resolveEndpoint } from "../types/settings";
@@ -19,7 +20,8 @@ import { ReportViewer } from "./viewer/ReportViewer";
 // + ポンチ絵生成(images/generations 互換 API → IndexedDB 保存)。
 
 export function ViewerPage({ reportId }: { reportId: string }) {
-  const report = useLiveQuery(() => db.reports.get(reportId), [reportId]);
+  // undefined = 読み込み中、null = 未登録(get は未登録でも undefined を返すため ?? null で区別する)
+  const report = useLiveQuery(async () => (await db.reports.get(reportId)) ?? null, [reportId]);
   const project = useLiveQuery(() => db.projects.filter((p) => p.reportId === reportId).first(), [reportId]);
   const { settings } = useSettings();
   const [exporting, setExporting] = useState(false);
@@ -35,6 +37,8 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   // クリックで最大化表示(ライトボックス)。Escape でも閉じる
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // 同梱サンプルの自動取り込みに失敗したときのメッセージ
+  const [sampleError, setSampleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!lightboxOpen) return;
@@ -61,6 +65,28 @@ export function ViewerPage({ reportId }: { reportId: string }) {
     };
   }, [reportId]);
 
+  // #/report/sample への直リンクを、サンプル未登録のブラウザ(初訪問など)で開いた場合は
+  // 同梱サンプルをその場で取り込む。取り込み後は useLiveQuery が再評価して表示される。
+  // ポンチ絵は上の effect が取り込み前に読み終えているので、ここで読み直す。
+  // 取り込み途中でレポート本体が先に保存され report が変わるため、deps に report を
+  // 入れて cleanup で打ち切るとポンチ絵の読み直しが捨てられる。reportId の一致だけで判定する。
+  const currentReportIdRef = useRef(reportId);
+  currentReportIdRef.current = reportId;
+  const needsSampleImport = reportId === SAMPLE_REPORT_ID && report === null;
+  useEffect(() => {
+    if (!needsSampleImport) return;
+    const targetId = reportId;
+    setSampleError(null);
+    importSampleReport()
+      .then(() => getReportImage(targetId))
+      .then((row) => {
+        if (currentReportIdRef.current === targetId) setImageRow(row ?? null);
+      })
+      .catch((e) => {
+        if (currentReportIdRef.current === targetId) setSampleError(e instanceof Error ? e.message : String(e));
+      });
+  }, [needsSampleImport, reportId]);
+
   // オブジェクト URL は blob からこの effect で一元管理する。cleanup で必ず revoke
   // されるため、手動管理で起きるリーク(revoke 漏れ)が構造的に起きない。
   const ponchieBlob = imageRow?.blob ?? null;
@@ -86,7 +112,10 @@ export function ViewerPage({ reportId }: { reportId: string }) {
   const imagePrice = imagePreset?.knownImageModels?.find((m) => m.id === imageEndpoint.model)?.price;
 
   if (report === undefined) return <p>読み込み中...</p>;
-  if (report === null || !report) return <p>レポートが見つかりません。</p>;
+  if (report === null) {
+    if (reportId !== SAMPLE_REPORT_ID) return <p>レポートが見つかりません。</p>;
+    return <p>{sampleError ? `サンプルの読み込みに失敗しました: ${sampleError}` : "サンプルを読み込み中..."}</p>;
+  }
 
   // 生成元プロジェクトがあるか、レポート自体に座標が入っていれば再クラスタリングできる
   const reclusterable = !!project || canRecluster(report.result);

@@ -3,14 +3,9 @@ import { useRef } from "react";
 import { exportResultJson, parsePreprocessed, parseResultJson } from "../lib/export";
 import { canRecluster, ensureInteractiveProject } from "../lib/reportProject";
 import { navigate } from "../lib/router";
+import { importSampleReport } from "../lib/sampleReport";
 import { dexieStepStore } from "../lib/storage/checkpoints";
-import {
-  db,
-  deleteProjectData,
-  deleteReportWithImage,
-  putReportImage,
-  requestPersistentStorage,
-} from "../lib/storage/db";
+import { db, deleteProjectData, deleteReportWithImage, requestPersistentStorage } from "../lib/storage/db";
 import { PROJECT_KIND } from "../stance-spectrum/storageKeys";
 import { useSettings } from "../store/settings";
 import type { Project } from "../types/project";
@@ -102,32 +97,7 @@ export function HomePage() {
   // 同梱サンプルレポート(実データで生成した本家互換 JSON)を開く
   const openSample = async () => {
     try {
-      const response = await fetch(`${import.meta.env.BASE_URL}sample-report.json`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const result = parseResultJson(await response.text());
-      await db.reports.put({
-        id: "sample",
-        title: result.config?.name || "サンプルレポート",
-        createdAt: Date.now(),
-        result,
-      });
-      // 同梱のポンチ絵(gpt-image-2 で事前生成)も取り込む。API キーなしで
-      // ポンチ絵つきのレポートを体験できるようにするため。無ければ黙ってスキップ
-      try {
-        const imageResponse = await fetch(`${import.meta.env.BASE_URL}sample-ponchie.png`);
-        if (imageResponse.ok) {
-          const { buildPonchiePrompt } = await import("../lib/imageGen");
-          await putReportImage({
-            reportId: "sample",
-            blob: await imageResponse.blob(),
-            prompt: buildPonchiePrompt(result),
-            model: "gpt-image-2",
-            createdAt: Date.now(),
-          });
-        }
-      } catch {
-        // ポンチ絵はおまけなので、取得失敗でサンプル自体を止めない
-      }
+      await importSampleReport();
       navigate("/report/sample");
     } catch (e) {
       alert(`サンプルの読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
