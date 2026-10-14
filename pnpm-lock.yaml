@@ -44,8 +44,8 @@ importers:
         specifier: ^5.7.0
         version: 5.7.0
       plotly.js-dist-min:
-        specifier: ^3.7.0
-        version: 3.7.0
+        specifier: ^4.1.2
+        version: 4.1.2
       pptxgenjs:
         specifier: ^4.0.1
         version: 4.0.1
@@ -1298,8 +1298,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  plotly.js-dist-min@3.7.0:
-    resolution: {integrity: sha512-IRWNnBJZmKss3URDnicBK2nvt/VTSi/MD1GnUscAYFjwSuN6g/CTde5R1UC0RYtblehj8rkT4BL8r05e/c8j5Q==}
+  plotly.js-dist-min@4.1.2:
+    resolution: {integrity: sha512-VSmS9KVNun16S8qFYYp9LlL/XBby4ueeGqB+K9AqRCVsup8dSpGULap4UyR1f2mz4pV3qjWp1sR5chwLgIKPoQ==}
 
   postcss@8.5.30:
     resolution: {integrity: sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==}
@@ -2543,7 +2543,7 @@ snapshots:
     dependencies:
       playwright-core: 1.64.1
 
-  plotly.js-dist-min@3.7.0: {}
+  plotly.js-dist-min@4.1.2: {}
 
   postcss@8.5.30:
     dependencies:
