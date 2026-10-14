@@ -14,7 +14,7 @@
     "debug:pipeline": "vite-node scripts/debug-pipeline.ts"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^4.3.1",
     "delaunator": "^5.1.0",
     "dexie": "^4.4.5",
     "dexie-react-hooks": "^4.4.0",
@@ -47,7 +47,12 @@
   },
   "pnpm": {
     "overrides": {
-      "adm-zip@<0.6.0": ">=0.6.0"
+      "adm-zip@<0.6.1": "0.6.1",
+      "image-size@<2.0.4": "^2.0.4",
+      "sharp@<0.35.5": "^0.35.5",
+      "source-map-js@<1.2.2": "^1.2.2",
+      "browserslist@<4.28.7": "^4.28.7",
+      "baseline-browser-mapping@<2.11.0": "^2.11.0"
     }
   }
 }
