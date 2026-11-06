@@ -15,36 +15,36 @@
     "debug:pipeline": "vite-node scripts/debug-pipeline.ts"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.3.1",
+    "@huggingface/transformers": "^4.3.2",
     "delaunator": "^5.1.0",
-    "dexie": "^4.4.6",
+    "dexie": "^4.4.7",
     "dexie-react-hooks": "^4.4.0",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
     "ml-hclust": "^4.0.0",
     "ml-kmeans": "^7.0.1",
     "papaparse": "^5.7.0",
-    "plotly.js-dist-min": "^4.1.2",
+    "plotly.js-dist-min": "^4.2.0",
     "pptxgenjs": "^4.0.1",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "seedrandom": "^3.0.5",
     "umap-js": "^1.4.0",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.4",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/seedrandom": "^3.0.8",
-    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-react": "^6.2.1",
     "playwright": "^1.64.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vite-node": "^6.0.0",
-    "vite-plugin-singlefile": "^2.3.3",
-    "vitest": "^5.0.4"
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^5.1.0"
   },
   "pnpm": {
     "overrides": {
